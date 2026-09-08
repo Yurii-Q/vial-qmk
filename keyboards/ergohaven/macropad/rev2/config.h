@@ -1,5 +1,13 @@
 #pragma once
 
+// W25Q32JV: keep the historical EEPROM slot while declaring the full 4 MiB chip.
+#define WEAR_LEVELING_RP2040_FLASH_BASE 0x001FC000u
+
+// Render a complete 240x280 frame before flushing it, then drive the ST7789
+// at its practical RP2040 SPI ceiling. This removes the ten visible LVGL bands.
+#define QP_LVGL_BUFFER_DIVISOR 1
+#define EH_DISPLAY_SPI_DIVISOR 2
+
 // SPI config for display
 #define SPI_DRIVER SPID1
 #define SPI_SCK_PIN GP10
@@ -19,3 +27,4 @@
 
 #define EH_SHORT_PRODUCT_NAME "M4CR0Pad"
 #define EH_HAS_DISPLAY
+#define EH_STANDBY_BACKGROUND_ENABLE

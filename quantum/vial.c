@@ -24,7 +24,9 @@
 
 #include "vial_ensure_keycode.h"
 
-#define VIAL_UNLOCK_COUNTER_MAX 50
+#define VIAL_UNLOCK_HOLD_TIME_MS 3000
+#define VIAL_UNLOCK_COUNTER_TICK_MS 100
+#define VIAL_UNLOCK_COUNTER_MAX (VIAL_UNLOCK_HOLD_TIME_MS / VIAL_UNLOCK_COUNTER_TICK_MS)
 
 #ifdef VIAL_INSECURE
 #pragma message "Building Vial-enabled firmware in insecure mode."
@@ -192,10 +194,21 @@ void vial_handle_cmd(uint8_t *msg, uint8_t length) {
             if (vial_unlock_in_progress) {
                 bool holding = vial_unlock_combo_active();
 
-                if (timer_elapsed(vial_unlock_timer) > 100 && holding) {
-                    vial_unlock_timer = timer_read();
+                if (holding) {
+                    uint16_t elapsed = timer_elapsed(vial_unlock_timer);
+                    uint16_t ticks = elapsed / VIAL_UNLOCK_COUNTER_TICK_MS;
 
-                    vial_unlock_counter--;
+                    if (ticks > 0) {
+                        /* Keep the sub-tick remainder so the hold duration does not
+                         * depend on the host application's polling cadence. */
+                        vial_unlock_timer += ticks * VIAL_UNLOCK_COUNTER_TICK_MS;
+                        if (ticks >= vial_unlock_counter) {
+                            vial_unlock_counter = 0;
+                        } else {
+                            vial_unlock_counter -= ticks;
+                        }
+                    }
+
                     if (vial_unlock_counter == 0) {
                         /* ok unlock succeeded */
                         vial_unlock_in_progress = 0;
@@ -203,6 +216,7 @@ void vial_handle_cmd(uint8_t *msg, uint8_t length) {
                     }
                 } else {
                     vial_unlock_counter = VIAL_UNLOCK_COUNTER_MAX;
+                    vial_unlock_timer = timer_read();
                 }
             }
 #endif

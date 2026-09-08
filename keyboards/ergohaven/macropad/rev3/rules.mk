@@ -1,11 +1,15 @@
 MCU = RP2040
 BOARD = GENERIC_RP_RP2040
 BOOTLOADER = rp2040
+OPT_DEFS += -DPICO_FLASH_SIZE_BYTES=4194304
+OPT_DEFS += -DEH_PICTOGRAM_ENABLE
+EXTRALDFLAGS += -Wl,--defsym=FLASH_LEN=0x000A0000
 # ALLOW_WARNINGS = yes
 # PICO_INTRINSICS_ENABLED = no
 
 # Build Options
 ENCODER_ENABLE = yes
+OPT_DEFS += -DEH_DISPLAY_COLOR_SETTINGS
 
 NKRO_ENABLE = yes
 BOOTMAGIC_ENABLE = yes
@@ -43,6 +47,8 @@ SRC += keyboards/ergohaven/src/display/eh_display.c
 SRC += keyboards/ergohaven/src/display/eh_screen_splash.c
 SRC += keyboards/ergohaven/src/display/eh_screen_home.c
 SRC += keyboards/ergohaven/src/display/eh_screen_volume.c
+SRC += keyboards/ergohaven/src/display/eh_background.c
+SRC += keyboards/ergohaven/src/display/eh_pictograms.c
 SRC += keyboards/ergohaven/src/display/eh_logo.c
 SRC += keyboards/ergohaven/src/display/fonts/eh_font_montserrat_20.c
 SRC += keyboards/ergohaven/src/display/fonts/eh_font_montserrat_28.c
