@@ -70,6 +70,12 @@ void display_apply_background_color(uint8_t red, uint8_t green, uint8_t blue) {
 
     lv_style_set_bg_color(&style_screen, display_background_color);
     lv_style_set_text_color(&style_button_active, display_background_color);
+    // Mutating a shared LVGL style does not automatically repaint every
+    // object which already references it. Report the change before updating
+    // screen-specific custom drawing so the entire active background changes
+    // in the same frame.
+    lv_obj_report_style_change(&style_screen);
+    lv_obj_report_style_change(&style_button_active);
     display_background_color_changed_kb();
 }
 

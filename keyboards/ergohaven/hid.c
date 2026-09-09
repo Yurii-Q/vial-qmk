@@ -9,6 +9,9 @@
 #ifdef EH_PICTOGRAM_ENABLE
 #    include "src/display/eh_pictograms.h"
 #endif
+#ifdef EH_STARTUP_IMAGE_ENABLE
+#    include "src/display/eh_startup_image.h"
+#endif
 
 static hid_data_t hid_data;
 
@@ -50,10 +53,15 @@ bool process_raw_hid_data(uint8_t *data, uint8_t length) {
 
     switch (data_type) {
         case _TIME:
-            hid_data.hours        = data[1];
-            hid_data.minutes      = data[2];
-            hid_data.time_changed = true;
-            new_hid_data          = true;
+            // 0xff:0xff was used by older Entropy builds as a shutdown
+            // sentinel. Never expose it (or any malformed packet) as a clock
+            // value; the last valid time remains visible until normal timeout.
+            if (data[1] < 24 && data[2] < 60) {
+                hid_data.hours        = data[1];
+                hid_data.minutes      = data[2];
+                hid_data.time_changed = true;
+                new_hid_data          = true;
+            }
             break;
 
         case _VOLUME:
@@ -162,6 +170,9 @@ static bool process_via_custom_lighting(uint8_t *data, uint8_t length) {
 #    include "transactions.h"
 
 void raw_hid_receive_kb(uint8_t *data, uint8_t length) {
+#ifdef EH_STARTUP_IMAGE_ENABLE
+    if (eh_startup_image_process_hid(data, length)) return;
+#endif
 #ifdef EH_STANDBY_BACKGROUND_ENABLE
     if (eh_background_process_hid(data, length)) return;
 #endif
@@ -190,6 +201,9 @@ void keyboard_post_init_hid(void) {
 #else
 
 void raw_hid_receive_kb(uint8_t *data, uint8_t length) {
+#ifdef EH_STARTUP_IMAGE_ENABLE
+    if (eh_startup_image_process_hid(data, length)) return;
+#endif
 #ifdef EH_STANDBY_BACKGROUND_ENABLE
     if (eh_background_process_hid(data, length)) return;
 #endif

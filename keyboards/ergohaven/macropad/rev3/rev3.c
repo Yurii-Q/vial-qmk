@@ -21,11 +21,11 @@
 #define MACROPAD_DISPLAY_SETTINGS_MAGIC 0xDC
 #define MACROPAD_DISPLAY_BUTTON_STYLE_COUNT 33
 #define MACROPAD_DISPLAY_BRIGHTNESS_DEFAULT 100
-#define MACROPAD_CLOCK_STYLE_COUNT 7
+#define MACROPAD_CLOCK_STYLE_COUNT 10
 #define MACROPAD_CLOCK_SIZE_COUNT 3
 #define MACROPAD_CLOCK_ALIGNMENT_COUNT 3
-#define MACROPAD_CLOCK_DELAY_VARIANT_COUNT 7
-#define MACROPAD_CLOCK_DELAY_DEFAULT 2
+#define MACROPAD_CLOCK_DELAY_VARIANT_COUNT 8
+#define MACROPAD_CLOCK_DELAY_DEFAULT 7
 
 typedef struct __attribute__((packed)) {
     uint8_t red;
@@ -463,7 +463,8 @@ void set_clock_delay_variant(uint8_t variant) {
 }
 
 uint32_t get_clock_delay_ms(void) {
-    static const uint8_t delay_seconds[MACROPAD_CLOCK_DELAY_VARIANT_COUNT] = {0, 5, 10, 15, 30, 60, 120};
+    // Keep the original indices stable for settings already stored in EEPROM.
+    static const uint8_t delay_seconds[MACROPAD_CLOCK_DELAY_VARIANT_COUNT] = {0, 5, 10, 15, 30, 60, 120, 20};
     return (uint32_t)delay_seconds[display_settings.clock_delay_variant] * 1000;
 }
 

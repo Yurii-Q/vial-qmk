@@ -25,6 +25,7 @@ static uint32_t last_user_activity_timer = 0;
 static uint32_t encoder_volume_timer     = 0;
 static bool     encoder_volume_recent    = false;
 static uint32_t handled_matrix_activity  = 0;
+static bool     volume_sync_initialized  = false;
 
 #define ENCODER_VOLUME_SYNC_WINDOW_MS 3000
 
@@ -38,6 +39,7 @@ typedef enum {
 
 static screen_t screen_state        = SCREEN_OFF;
 static screen_t change_screen_state = SCREEN_OFF;
+static screen_t volume_return_state = SCREEN_HOME;
 
 eh_screen_t current_screen;
 
@@ -110,11 +112,16 @@ void display_process_encoder_event(uint8_t index, bool clockwise, uint16_t keyco
     last_user_activity_timer = timer_read32();
 
     int8_t volume_direction = volume_direction_for_keycode(keycode);
-    if (volume_direction == 0) return;
-
     if (screen_state == SCREEN_LAYOUT && change_screen_state == SCREEN_LAYOUT) {
         screen_layout_process_encoder_event(index, clockwise);
-        return;
+    }
+
+    // Encoder movement is user input, but it does not change the current
+    // display mode. Volume keycodes temporarily open the volume screen and
+    // then return to the screen from which the encoder was turned.
+    if (volume_direction == 0) return;
+    if (screen_state != SCREEN_VOLUME) {
+        volume_return_state = screen_state == SCREEN_SPLASH ? SCREEN_LAYOUT : screen_state;
     }
 
     screen_volume_process_encoder_event(volume_direction > 0);
@@ -202,9 +209,18 @@ void display_housekeeping_task(void) {
     // periodic media/volume updates must not wake a powered-down panel.
     if (screen_state != SCREEN_OFF && hid_active && hid_data->hid_changed) {
         if (hid_data->volume_changed) {
-            if (screen_state == SCREEN_LAYOUT || change_screen_state == SCREEN_LAYOUT) {
+            bool initial_sync = !volume_sync_initialized;
+            volume_sync_initialized = true;
+            if (initial_sync && !encoder_volume_recent && screen_state != SCREEN_VOLUME) {
+                // Entropy sends the current host volume when it connects. It
+                // establishes the baseline but must not replace the startup
+                // or layout screen with a synthetic volume notification.
                 hid_data->volume_changed = false;
-                encoder_volume_recent    = false;
+            } else if (screen_state == SCREEN_LAYOUT || change_screen_state == SCREEN_LAYOUT) {
+                volume_return_state   = SCREEN_LAYOUT;
+                change_screen_state   = SCREEN_VOLUME;
+                screen_timer          = timer_read32();
+                encoder_volume_recent = false;
             } else if (screen_state == SCREEN_VOLUME || change_screen_state == SCREEN_VOLUME) {
                 change_screen_state   = SCREEN_VOLUME;
                 screen_timer          = timer_read32();
@@ -213,16 +229,15 @@ void display_housekeeping_task(void) {
                 hid_data->volume_changed = false;
                 encoder_volume_recent    = false;
             } else {
+                volume_return_state = SCREEN_HOME;
                 change_screen_state = SCREEN_VOLUME;
                 screen_timer        = timer_read32();
             }
         }
-        if (!key_animation_active && user_activity_elapsed > EH_DISPLAY_TIMEOUT_ACTIVITY && hid_data->media_artist_changed) {
-            change_screen_state = SCREEN_HOME;
-        }
-        if (!key_animation_active && user_activity_elapsed > EH_DISPLAY_TIMEOUT_ACTIVITY && hid_data->media_title_changed) {
-            change_screen_state = SCREEN_HOME;
-        }
+        // Media metadata updates the standby content, but it is not user
+        // input and must never pull the keyboard away from the main layout.
+        // The normal clock delay remains the only automatic LAYOUT -> HOME
+        // transition.
     }
 
     if (screen_state == change_screen_state) {
@@ -255,7 +270,7 @@ void display_housekeeping_task(void) {
 
             case SCREEN_VOLUME:
                 if (screen_elapsed > EH_DISPLAY_TIMEOUT_VOLUME_SCREEN) {
-                    change_screen_state = SCREEN_HOME;
+                    change_screen_state = volume_return_state;
                 }
                 break;
 

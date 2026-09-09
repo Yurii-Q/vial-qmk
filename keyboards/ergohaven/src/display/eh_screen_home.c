@@ -12,6 +12,35 @@
 
 LV_FONT_DECLARE(eh_font_montserrat_20);
 LV_FONT_DECLARE(eh_font_montserrat_28);
+#ifdef EH_CLOCK_FONT_CHOICES_ENABLE
+LV_FONT_DECLARE(eh_font_clock_ubuntu_sans_28);
+LV_FONT_DECLARE(eh_font_clock_ubuntu_sans_40);
+LV_FONT_DECLARE(eh_font_clock_ubuntu_sans_48);
+LV_FONT_DECLARE(eh_font_clock_ubuntu_mono_28);
+LV_FONT_DECLARE(eh_font_clock_ubuntu_mono_40);
+LV_FONT_DECLARE(eh_font_clock_ubuntu_mono_48);
+LV_FONT_DECLARE(eh_font_clock_liberation_mono_28);
+LV_FONT_DECLARE(eh_font_clock_liberation_mono_40);
+LV_FONT_DECLARE(eh_font_clock_liberation_mono_48);
+LV_FONT_DECLARE(eh_font_clock_dejavu_sans_28);
+LV_FONT_DECLARE(eh_font_clock_dejavu_sans_40);
+LV_FONT_DECLARE(eh_font_clock_dejavu_sans_48);
+LV_FONT_DECLARE(eh_font_clock_dejavu_serif_28);
+LV_FONT_DECLARE(eh_font_clock_dejavu_serif_40);
+LV_FONT_DECLARE(eh_font_clock_dejavu_serif_48);
+LV_FONT_DECLARE(eh_font_clock_dejavu_mono_28);
+LV_FONT_DECLARE(eh_font_clock_dejavu_mono_40);
+LV_FONT_DECLARE(eh_font_clock_dejavu_mono_48);
+LV_FONT_DECLARE(eh_font_clock_liberation_sans_28);
+LV_FONT_DECLARE(eh_font_clock_liberation_sans_40);
+LV_FONT_DECLARE(eh_font_clock_liberation_sans_48);
+LV_FONT_DECLARE(eh_font_clock_liberation_serif_28);
+LV_FONT_DECLARE(eh_font_clock_liberation_serif_40);
+LV_FONT_DECLARE(eh_font_clock_liberation_serif_48);
+LV_FONT_DECLARE(eh_font_clock_liberation_narrow_28);
+LV_FONT_DECLARE(eh_font_clock_liberation_narrow_40);
+LV_FONT_DECLARE(eh_font_clock_liberation_narrow_48);
+#endif
 
 static lv_obj_t *screen_home;
 #ifdef EH_STANDBY_BACKGROUND_ENABLE
@@ -20,6 +49,8 @@ static lv_obj_t *standby_background_dim;
 #endif
 static lv_obj_t *label_product;
 static lv_obj_t *label_time;
+static lv_obj_t *label_time_colon;
+static lv_obj_t *label_time_minutes;
 static lv_obj_t *label_layer_icon;
 static lv_obj_t *label_layer;
 static lv_obj_t *label_mac;
@@ -131,8 +162,10 @@ enum {
 
 static void apply_clock_element_visibility(void) {
     bool clock_visible = get_clock_visible();
-    toggle_hidden(label_time, clock_visible && get_clock_style() == CLOCK_STYLE_MODERN);
-    toggle_hidden(clock_custom, clock_visible && get_clock_style() != CLOCK_STYLE_MODERN);
+    toggle_hidden(label_time, clock_visible);
+    toggle_hidden(label_time_colon, clock_visible && clock_colon_visible);
+    toggle_hidden(label_time_minutes, clock_visible);
+    toggle_hidden(clock_custom, false);
 
     bool info_visible = get_clock_info_visible();
     toggle_hidden(label_layer_icon, info_visible);
@@ -144,14 +177,24 @@ static void apply_clock_element_visibility(void) {
 }
 
 static const lv_font_t *clock_font(void) {
-    switch (get_clock_size()) {
-        case 0:
-            return &lv_font_montserrat_28;
-        case 1:
-            return &lv_font_montserrat_40;
-        default:
-            return &lv_font_montserrat_48;
-    }
+#ifdef EH_CLOCK_FONT_CHOICES_ENABLE
+    static const lv_font_t *const fonts[10][3] = {
+        {&lv_font_montserrat_28, &lv_font_montserrat_40, &lv_font_montserrat_48},
+        {&eh_font_clock_ubuntu_sans_28, &eh_font_clock_ubuntu_sans_40, &eh_font_clock_ubuntu_sans_48},
+        {&eh_font_clock_ubuntu_mono_28, &eh_font_clock_ubuntu_mono_40, &eh_font_clock_ubuntu_mono_48},
+        {&eh_font_clock_liberation_mono_28, &eh_font_clock_liberation_mono_40, &eh_font_clock_liberation_mono_48},
+        {&eh_font_clock_dejavu_sans_28, &eh_font_clock_dejavu_sans_40, &eh_font_clock_dejavu_sans_48},
+        {&eh_font_clock_dejavu_serif_28, &eh_font_clock_dejavu_serif_40, &eh_font_clock_dejavu_serif_48},
+        {&eh_font_clock_dejavu_mono_28, &eh_font_clock_dejavu_mono_40, &eh_font_clock_dejavu_mono_48},
+        {&eh_font_clock_liberation_sans_28, &eh_font_clock_liberation_sans_40, &eh_font_clock_liberation_sans_48},
+        {&eh_font_clock_liberation_serif_28, &eh_font_clock_liberation_serif_40, &eh_font_clock_liberation_serif_48},
+        {&eh_font_clock_liberation_narrow_28, &eh_font_clock_liberation_narrow_40, &eh_font_clock_liberation_narrow_48},
+    };
+    return fonts[MIN(get_clock_style(), 9)][MIN(get_clock_size(), 2)];
+#else
+    static const lv_font_t *const fonts[] = {&lv_font_montserrat_28, &lv_font_montserrat_40, &lv_font_montserrat_48};
+    return fonts[MIN(get_clock_size(), 2)];
+#endif
 }
 
 static lv_coord_t clock_height(void) {
@@ -170,9 +213,39 @@ static lv_coord_t clock_aligned_x(const lv_area_t *area, lv_coord_t width) {
     }
 }
 
+static lv_coord_t clock_text_width(const char *text, const lv_font_t *font) {
+    return lv_txt_get_width(text, strlen(text), font, 0, LV_TEXT_FLAG_NONE);
+}
+
+static void position_clock_labels(void) {
+    const lv_font_t *font = clock_font();
+    lv_coord_t widest_digit = 0;
+    for (char digit = '0'; digit <= '9'; digit++) {
+        char text[2] = {digit, '\0'};
+        widest_digit = MAX(widest_digit, clock_text_width(text, font));
+    }
+    lv_coord_t pair_width  = widest_digit * 2;
+    lv_coord_t colon_width = clock_text_width(":", font);
+    lv_coord_t total_width = pair_width * 2 + colon_width;
+    lv_area_t area = {.x1 = 10, .y1 = 20, .x2 = 229, .y2 = 99};
+    lv_coord_t x = clock_aligned_x(&area, total_width);
+    lv_coord_t y = 36 + (48 - font->line_height) / 2;
+    lv_coord_t height = font->line_height + 4;
+
+    lv_obj_set_pos(label_time, x, y);
+    lv_obj_set_size(label_time, pair_width, height);
+    lv_obj_set_pos(label_time_colon, x + pair_width, y);
+    lv_obj_set_size(label_time_colon, colon_width, height);
+    lv_obj_set_pos(label_time_minutes, x + pair_width + colon_width, y);
+    lv_obj_set_size(label_time_minutes, pair_width, height);
+}
+
 static void update_clock_label(void) {
-    if (label_time == NULL) return;
-    lv_label_set_text_fmt(label_time, "%02d%c%02d", clock_hours, clock_colon_visible ? ':' : ' ', clock_minutes);
+    if (label_time == NULL || label_time_colon == NULL || label_time_minutes == NULL) return;
+    lv_label_set_text_fmt(label_time, "%02d", clock_hours);
+    lv_label_set_text(label_time_colon, ":");
+    lv_label_set_text_fmt(label_time_minutes, "%02d", clock_minutes);
+    toggle_hidden(label_time_colon, get_clock_visible() && clock_colon_visible);
 }
 
 static void update_clock_colon(lv_timer_t *timer) {
@@ -397,6 +470,9 @@ static void finish_flip_animation(lv_anim_t *animation) {
     flip_animation_progress = 100;
     flip_changed_mask       = 0;
     lv_obj_invalidate(clock_custom);
+    lv_obj_invalidate(label_time);
+    lv_obj_invalidate(label_time_colon);
+    lv_obj_invalidate(label_time_minutes);
 }
 
 static void start_flip_animation(uint8_t previous_hours, uint8_t previous_minutes, uint8_t hours, uint8_t minutes) {
@@ -546,8 +622,12 @@ void screen_home_apply_clock_settings(void) {
     lv_obj_set_style_bg_opa(standby_background_dim, (lv_opa_t)((uint16_t)get_clock_background_dim() * LV_OPA_COVER / 100), 0);
     toggle_hidden(standby_background_dim, eh_background_is_valid() && get_clock_background_dim() > 0);
 #endif
-    lv_obj_set_style_text_color(label_time, text_color, 0);
-    lv_obj_set_style_opa(label_time, opacity_from_percent(get_clock_opacity()), 0);
+    lv_obj_t *time_labels[] = {label_time, label_time_colon, label_time_minutes};
+    for (uint8_t index = 0; index < ARRAY_SIZE(time_labels); index++) {
+        lv_obj_set_style_text_color(time_labels[index], text_color, 0);
+        lv_obj_set_style_text_font(time_labels[index], clock_font(), LV_PART_MAIN);
+        lv_obj_set_style_opa(time_labels[index], opacity_from_percent(get_clock_opacity()), 0);
+    }
     lv_obj_set_style_opa(clock_custom, opacity_from_percent(get_clock_opacity()), 0);
     lv_obj_t *info_labels[] = {label_layer_icon, label_layer, label_mac, label_layout};
     for (uint8_t index = 0; index < ARRAY_SIZE(info_labels); index++) {
@@ -564,10 +644,10 @@ void screen_home_apply_clock_settings(void) {
         lv_obj_set_style_text_color(status_labels[index], background, LV_STATE_PRESSED);
         lv_obj_set_style_opa(status_labels[index], opacity_from_percent(get_clock_modifiers_opacity()), 0);
     }
-    lv_obj_set_style_text_font(label_time, clock_font(), LV_PART_MAIN);
-    lv_obj_set_style_text_align(label_time, (lv_text_align_t[]){LV_TEXT_ALIGN_LEFT, LV_TEXT_ALIGN_CENTER, LV_TEXT_ALIGN_RIGHT}[MIN(get_clock_alignment(), 2)], 0);
-    lv_obj_set_pos(label_time, 10, 36 + (48 - clock_font()->line_height) / 2);
-    lv_obj_set_size(label_time, 220, 64);
+    lv_obj_set_style_text_align(label_time, LV_TEXT_ALIGN_RIGHT, 0);
+    lv_obj_set_style_text_align(label_time_colon, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_align(label_time_minutes, LV_TEXT_ALIGN_LEFT, 0);
+    position_clock_labels();
     clock_colon_visible = true;
     update_clock_label();
     toggle_hidden(label_product, false);
@@ -604,11 +684,21 @@ void screen_home_init(void) {
 
     label_time = lv_label_create(screen_home);
     lv_obj_set_style_text_font(label_time, &lv_font_montserrat_48, LV_PART_MAIN);
-    lv_obj_set_style_text_align(label_time, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_pos(label_time, 0, 36);
-    lv_obj_set_size(label_time, 240, 50);
-    lv_label_set_text(label_time, "00:00");
+    lv_obj_set_style_text_align(label_time, LV_TEXT_ALIGN_RIGHT, 0);
+    lv_label_set_text(label_time, "00");
     lv_obj_add_flag(label_time, LV_OBJ_FLAG_HIDDEN);
+
+    label_time_colon = lv_label_create(screen_home);
+    lv_obj_set_style_text_font(label_time_colon, &lv_font_montserrat_48, LV_PART_MAIN);
+    lv_obj_set_style_text_align(label_time_colon, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_text(label_time_colon, ":");
+    lv_obj_add_flag(label_time_colon, LV_OBJ_FLAG_HIDDEN);
+
+    label_time_minutes = lv_label_create(screen_home);
+    lv_obj_set_style_text_font(label_time_minutes, &lv_font_montserrat_48, LV_PART_MAIN);
+    lv_obj_set_style_text_align(label_time_minutes, LV_TEXT_ALIGN_LEFT, 0);
+    lv_label_set_text(label_time_minutes, "00");
+    lv_obj_add_flag(label_time_minutes, LV_OBJ_FLAG_HIDDEN);
 
     clock_custom = lv_obj_create(screen_home);
     lv_obj_set_pos(clock_custom, 0, 20);

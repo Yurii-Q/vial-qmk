@@ -43,6 +43,30 @@ static void display_wake_interrupt_init(void) {
 }
 #endif
 
+#if defined(EH_ENCODER_WAKE_INTERRUPTS) && defined(ENCODER_ENABLE) && PAL_USE_CALLBACKS
+static const pin_t display_encoder_pins_a[] = ENCODER_A_PINS;
+static const pin_t display_encoder_pins_b[] = ENCODER_B_PINS;
+
+extern void encoder_quadrature_handle_read(uint8_t index, uint8_t pin_a_state, uint8_t pin_b_state);
+
+static void display_encoder_pin_callback(void *argument) {
+    uint8_t index = (uint8_t)(uintptr_t)argument;
+    // The QMK quadrature driver explicitly supports feeding pin changes from
+    // IRQ context. It only updates its tiny state machine and queues a normal
+    // encoder event; keycodes, LVGL and SPI remain in the main thread.
+    encoder_quadrature_handle_read(index, gpio_read_pin(display_encoder_pins_a[index]), gpio_read_pin(display_encoder_pins_b[index]));
+}
+
+void encoder_quadrature_post_init_kb(void) {
+    for (uint8_t index = 0; index < NUM_ENCODERS; index++) {
+        palSetLineCallback(display_encoder_pins_a[index], display_encoder_pin_callback, (void *)(uintptr_t)index);
+        palSetLineCallback(display_encoder_pins_b[index], display_encoder_pin_callback, (void *)(uintptr_t)index);
+        palEnableLineEvent(display_encoder_pins_a[index], PAL_EVENT_MODE_BOTH_EDGES);
+        palEnableLineEvent(display_encoder_pins_b[index], PAL_EVENT_MODE_BOTH_EDGES);
+    }
+}
+#endif
+
 #if defined(RGB_MATRIX_ENABLE) && defined(EH_RGB_MATRIX_RUNTIME_TIMEOUT)
 static bool rgb_matrix_timeout_suspended = false;
 #endif
