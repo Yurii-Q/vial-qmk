@@ -1,3 +1,4 @@
+#include "src/display/eh_date_settings.h"
 #include "display.h"
 #include "backlight.h"
 #include "eeconfig.h"
@@ -22,7 +23,7 @@
 #define MACROPAD_DISPLAY_BUTTON_STYLE_COUNT 33
 #define MACROPAD_DISPLAY_BRIGHTNESS_DEFAULT 100
 #define MACROPAD_CLOCK_STYLE_COUNT 10
-#define MACROPAD_CLOCK_SIZE_COUNT 3
+#define MACROPAD_CLOCK_SIZE_COUNT 4
 #define MACROPAD_CLOCK_ALIGNMENT_COUNT 3
 #define MACROPAD_CLOCK_DELAY_VARIANT_COUNT 8
 #define MACROPAD_CLOCK_DELAY_DEFAULT 7
@@ -65,11 +66,13 @@ typedef struct __attribute__((packed)) {
     uint8_t clock_modifiers_opacity;
 } macropad_display_settings_t;
 
+#ifndef EH_DISPLAY_SETTINGS_FLASH
 _Static_assert(sizeof(macropad_display_settings_t) == KB_SETTINGS_LCD_SIZE, "macropad display settings size mismatch");
+#endif
 
 static uint8_t rgb_timeout_mins = MACROPAD_RGB_TIMEOUT_DEFAULT_MINS;
 static macropad_display_settings_t display_settings = {
-    .red = 84, .green = 189, .blue = 191, .style = 0, .brightness = MACROPAD_DISPLAY_BRIGHTNESS_DEFAULT,
+    .red = 200, .green = 178, .blue = 146, .style = 0, .brightness = MACROPAD_DISPLAY_BRIGHTNESS_DEFAULT,
     .background_red = 0, .background_green = 0, .background_blue = 0, .legacy_magic = MACROPAD_DISPLAY_SETTINGS_V012_MAGIC,
     .clock_text_red = 255, .clock_text_green = 255, .clock_text_blue = 255,
     .clock_background_red = 0, .clock_background_green = 0, .clock_background_blue = 0,
@@ -87,7 +90,11 @@ void kb_settings_lcd_reset(void);
 static void persist_display_settings(void) {
     display_settings.legacy_magic = MACROPAD_DISPLAY_SETTINGS_V012_MAGIC;
     display_settings.magic        = MACROPAD_DISPLAY_SETTINGS_MAGIC;
+#ifdef EH_DISPLAY_SETTINGS_FLASH
+    eh_extra_settings_write(16, &display_settings, sizeof(display_settings));
+#else
     eeconfig_update_kb_datablock(&display_settings, KB_SETTINGS_LCD_OFFSET, sizeof(display_settings));
+#endif
     display_apply_accent_color(display_settings.red, display_settings.green, display_settings.blue);
     display_apply_background_color(display_settings.background_red, display_settings.background_green, display_settings.background_blue);
     display_apply_button_style(display_settings.style);
@@ -176,7 +183,11 @@ void kb_settings_led_colors_reset(void) {
 }
 
 void kb_settings_lcd_init(void) {
+#ifdef EH_DISPLAY_SETTINGS_FLASH
+    eh_extra_settings_read(16, &display_settings, sizeof(display_settings));
+#else
     eeconfig_read_kb_datablock(&display_settings, KB_SETTINGS_LCD_OFFSET, sizeof(display_settings));
+#endif
     if (display_settings.magic == MACROPAD_DISPLAY_SETTINGS_MAGIC &&
         display_settings.style < MACROPAD_DISPLAY_BUTTON_STYLE_COUNT && display_settings.brightness <= 100 &&
         display_settings.clock_style < MACROPAD_CLOCK_STYLE_COUNT && display_settings.clock_size < MACROPAD_CLOCK_SIZE_COUNT &&
@@ -275,7 +286,7 @@ void kb_settings_lcd_init(void) {
 
 void kb_settings_lcd_reset(void) {
     display_settings = (macropad_display_settings_t){
-        .red = 84, .green = 189, .blue = 191, .style = 0, .brightness = MACROPAD_DISPLAY_BRIGHTNESS_DEFAULT,
+        .red = 200, .green = 178, .blue = 146, .style = 0, .brightness = MACROPAD_DISPLAY_BRIGHTNESS_DEFAULT,
         .background_red = 0, .background_green = 0, .background_blue = 0,
     };
     set_clock_defaults();
@@ -346,9 +357,11 @@ void set_lcd_brightness(uint8_t brightness) {
     persist_display_settings();
 }
 
+extern bool screen_home_is_active(void);
 uint8_t get_split_lcd_brightness(void) {
-    if (display_settings.brightness == 0) return 0;
-    uint8_t level = ((uint16_t)display_settings.brightness * BACKLIGHT_LEVELS + 50) / 100;
+    uint8_t brightness = screen_home_is_active() ? eh_date_get(10) : display_settings.brightness;
+    if (brightness == 0) return 0;
+    uint8_t level = ((uint16_t)brightness * BACKLIGHT_LEVELS + 50) / 100;
     return MAX(1, level);
 }
 
@@ -640,6 +653,7 @@ uint32_t get_led_rgb_timeout_ms(void) {
 }
 
 void housekeeping_task_user(void) {
+    eh_extra_settings_housekeep();
     display_housekeeping_task();
 }
 

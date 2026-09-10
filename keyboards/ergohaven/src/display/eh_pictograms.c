@@ -12,7 +12,7 @@
 #define EH_PICTOGRAM_FLASH_OFFSET 0x000E0000u
 #define EH_PICTOGRAM_FLASH_SIZE 0x00020000u
 #define EH_PICTOGRAM_MAGIC 0x49504845u
-#define EH_PICTOGRAM_FORMAT_VERSION 3u
+#define EH_PICTOGRAM_FORMAT_VERSION 4u
 #define EH_PICTOGRAM_HEADER_SIZE FLASH_PAGE_SIZE
 #define EH_PICTOGRAM_VALID_BYTES 32u
 #define EH_PICTOGRAM_RECORD_METADATA_SIZE 4u
@@ -134,15 +134,18 @@ static uint32_t header_crc(const uint8_t *header) {
 }
 
 static bool header_is_valid(const eh_pictogram_header_t *header) {
-    return header->magic == EH_PICTOGRAM_MAGIC && header->version == EH_PICTOGRAM_FORMAT_VERSION &&
-           header->width == EH_PICTOGRAM_WIDTH && header->height == EH_PICTOGRAM_HEIGHT &&
-           header->bytes_per_icon == EH_PICTOGRAM_BYTES && header->total_size == EH_PICTOGRAM_PACKAGE_SIZE &&
-           header_crc((const uint8_t *)header) == header->header_crc32;
+    bool current = header->version == 4 && header->width == 35 && header->height == 35 &&
+        header->bytes_per_icon == EH_PICTOGRAM_BYTES && header->total_size == EH_PICTOGRAM_PACKAGE_SIZE;
+    bool legacy = header->version == 3 && header->width == 32 && header->height == 32 &&
+        header->bytes_per_icon == 128 && header->total_size == 256 + 512 * 132;
+    return header->magic == EH_PICTOGRAM_MAGIC && (current || legacy) &&
+        header_crc((const uint8_t *)header) == header->header_crc32;
 }
-
 static bool storage_is_valid(void) {
-    return header_is_valid(stored_header) && crc32(stored_payload, EH_PICTOGRAM_PAYLOAD_SIZE) == stored_header->data_crc32;
+    return header_is_valid(stored_header) && crc32(stored_payload, stored_header->total_size - EH_PICTOGRAM_HEADER_SIZE) == stored_header->data_crc32;
 }
+static uint16_t stored_record_size(void) { return stored_header->bytes_per_icon + EH_PICTOGRAM_RECORD_METADATA_SIZE; }
+uint8_t eh_pictogram_stored_width(void) { return valid ? stored_header->width : EH_PICTOGRAM_WIDTH; }
 
 static void flash_erase(uint32_t relative_offset) {
     uint32_t interrupts = save_and_disable_interrupts();
@@ -243,12 +246,12 @@ const uint8_t *eh_pictogram_for_keycode(uint16_t keycode) {
     if (keycode >= QK_MACRO && keycode <= QK_MACRO_MAX) {
         uint16_t slot = keycode - QK_MACRO;
         if (!slot_is_valid(stored_header->macro_valid, slot)) return NULL;
-        return stored_payload + (uint32_t)slot * EH_PICTOGRAM_RECORD_SIZE + EH_PICTOGRAM_RECORD_METADATA_SIZE;
+        return stored_payload + (uint32_t)slot * stored_record_size() + EH_PICTOGRAM_RECORD_METADATA_SIZE;
     }
     if (keycode >= QK_TAP_DANCE && keycode <= QK_TAP_DANCE_MAX) {
         uint16_t slot = keycode - QK_TAP_DANCE;
         if (!slot_is_valid(stored_header->tap_dance_valid, slot)) return NULL;
-        return stored_payload + ((uint32_t)EH_PICTOGRAM_MACRO_SLOTS + slot) * EH_PICTOGRAM_RECORD_SIZE +
+        return stored_payload + ((uint32_t)EH_PICTOGRAM_MACRO_SLOTS + slot) * stored_record_size() +
                EH_PICTOGRAM_RECORD_METADATA_SIZE;
     }
     return NULL;
@@ -260,11 +263,11 @@ uint32_t eh_pictogram_color_for_keycode(uint16_t keycode) {
     if (keycode >= QK_MACRO && keycode <= QK_MACRO_MAX) {
         uint16_t slot = keycode - QK_MACRO;
         if (!slot_is_valid(stored_header->macro_valid, slot)) return 0;
-        record = (uint32_t)slot * EH_PICTOGRAM_RECORD_SIZE;
+        record = (uint32_t)slot * stored_record_size();
     } else if (keycode >= QK_TAP_DANCE && keycode <= QK_TAP_DANCE_MAX) {
         uint16_t slot = keycode - QK_TAP_DANCE;
         if (!slot_is_valid(stored_header->tap_dance_valid, slot)) return 0;
-        record = ((uint32_t)EH_PICTOGRAM_MACRO_SLOTS + slot) * EH_PICTOGRAM_RECORD_SIZE;
+        record = ((uint32_t)EH_PICTOGRAM_MACRO_SLOTS + slot) * stored_record_size();
     } else {
         return 0;
     }
@@ -328,24 +331,25 @@ bool eh_pictograms_process_hid(uint8_t *data, uint8_t length) {
             memset(data, 0, length);
             data[0] = command;
             data[1] = EH_PICTOGRAM_STATUS_OK;
-            data[2] = EH_PICTOGRAM_FORMAT_VERSION;
+            data[2] = valid ? stored_header->version : EH_PICTOGRAM_FORMAT_VERSION;
             data[3] = valid;
-            data[4] = EH_PICTOGRAM_WIDTH;
-            data[5] = EH_PICTOGRAM_HEIGHT;
-            write_u16(data + 6, EH_PICTOGRAM_BYTES);
-            write_u32(data + 8, EH_PICTOGRAM_PACKAGE_SIZE);
+            data[4] = eh_pictogram_stored_width();
+            data[5] = eh_pictogram_stored_width();
+            write_u16(data + 6, valid ? stored_header->bytes_per_icon : EH_PICTOGRAM_BYTES);
+            write_u32(data + 8, valid ? stored_header->total_size : EH_PICTOGRAM_PACKAGE_SIZE);
             write_u16(data + 12, EH_PICTOGRAM_MACRO_SLOTS);
             write_u16(data + 14, EH_PICTOGRAM_TAP_DANCE_SLOTS);
             data[16] = 2;
+            data[17] = EH_PICTOGRAM_FORMAT_VERSION;
             return true;
 
         case EH_PICTOGRAM_CMD_READ: {
             uint32_t offset = read_u32(data + 1);
-            if (!valid || offset >= EH_PICTOGRAM_PACKAGE_SIZE) {
+            if (!valid || offset >= stored_header->total_size) {
                 status = EH_PICTOGRAM_STATUS_BAD_OFFSET;
                 break;
             }
-            uint8_t amount = MIN((uint32_t)30, EH_PICTOGRAM_PACKAGE_SIZE - offset);
+            uint8_t amount = MIN((uint32_t)30, stored_header->total_size - offset);
             const uint8_t *source = (const uint8_t *)(XIP_BASE + EH_PICTOGRAM_FLASH_OFFSET + offset);
             memset(data, 0, length);
             data[0] = command;
@@ -395,7 +399,7 @@ bool eh_pictograms_process_hid(uint8_t *data, uint8_t length) {
                 break;
             }
             eh_pictogram_header_t *header = (eh_pictogram_header_t *)upload_header;
-            if (!header_is_valid(header)) {
+            if (!header_is_valid(header) || header->version != EH_PICTOGRAM_FORMAT_VERSION) {
                 status = EH_PICTOGRAM_STATUS_BAD_FORMAT;
                 upload_active = false;
                 break;
@@ -417,6 +421,9 @@ bool eh_pictograms_process_hid(uint8_t *data, uint8_t length) {
             break;
 
         case EH_PICTOGRAM_CMD_SLOT_BEGIN:
+            if (valid && stored_header->version != EH_PICTOGRAM_FORMAT_VERSION) {
+                status = EH_PICTOGRAM_STATUS_BAD_FORMAT; break;
+            }
             if (data[1] > 1 || read_u16(data + 2) >= EH_PICTOGRAM_MACRO_SLOTS || data[4] > 1) {
                 status = EH_PICTOGRAM_STATUS_BAD_FORMAT;
                 break;
@@ -483,14 +490,14 @@ bool eh_pictograms_process_hid(uint8_t *data, uint8_t length) {
             uint16_t slot = read_u16(data + 2);
             uint16_t offset = read_u16(data + 4);
             const uint8_t *valid_bits = kind == 0 ? stored_header->macro_valid : stored_header->tap_dance_valid;
-            if (!valid || kind > 1 || slot >= EH_PICTOGRAM_MACRO_SLOTS || offset >= EH_PICTOGRAM_RECORD_SIZE ||
+            if (!valid || kind > 1 || slot >= EH_PICTOGRAM_MACRO_SLOTS || offset >= stored_record_size() ||
                 !slot_is_valid(valid_bits, slot)) {
                 status = EH_PICTOGRAM_STATUS_BAD_OFFSET;
                 break;
             }
             uint32_t payload_slot = (kind == 0 ? 0u : EH_PICTOGRAM_MACRO_SLOTS) + slot;
-            const uint8_t *record = stored_payload + payload_slot * EH_PICTOGRAM_RECORD_SIZE;
-            uint8_t amount = MIN((uint16_t)30, (uint16_t)(EH_PICTOGRAM_RECORD_SIZE - offset));
+            const uint8_t *record = stored_payload + payload_slot * stored_record_size();
+            uint8_t amount = MIN((uint16_t)30, (uint16_t)(stored_record_size() - offset));
             memset(data, 0, length);
             data[0] = command;
             data[1] = EH_PICTOGRAM_STATUS_OK;

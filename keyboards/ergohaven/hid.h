@@ -5,6 +5,9 @@
 
 typedef struct {
     bool    hid_changed;
+    uint16_t year;
+    uint8_t month, day;
+    bool date_valid;
     uint8_t hours;
     uint8_t minutes;
     bool    time_changed;

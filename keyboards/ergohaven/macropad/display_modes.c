@@ -1,3 +1,6 @@
+#ifdef EH_DATE_SETTINGS_ENABLE
+#include "src/display/eh_date_settings.h"
+#endif
 #include "display.h"
 #include "qp.h"
 #include "src/eh_ruen.h"
@@ -244,6 +247,11 @@ void display_housekeeping_task(void) {
         uint32_t screen_elapsed   = timer_elapsed32(screen_timer);
         uint32_t activity_elapsed = last_input_activity_elapsed();
         uint32_t clock_delay      = get_clock_delay_ms();
+#ifdef EH_DATE_SETTINGS_ENABLE
+        static const uint32_t date_delays[] = {0,5000,10000,15000,30000,60000,120000,20000};
+        uint32_t date_delay = eh_date_get(0) ? date_delays[MIN(eh_date_get(9),7)] : 0;
+        if (date_delay && (!clock_delay || date_delay < clock_delay)) clock_delay = date_delay;
+#endif
         uint32_t display_timeout  = get_lcd_timeout_ms();
         bool     display_expired  = display_timeout > 0 && activity_elapsed > display_timeout && user_activity_elapsed > 500;
 

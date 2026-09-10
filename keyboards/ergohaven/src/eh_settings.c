@@ -1,3 +1,7 @@
+#ifdef EH_DATE_SETTINGS_ENABLE
+#    include "display/eh_date_settings.h"
+#    include "display/eh_display.h"
+#endif
 #include "eh_settings.h"
 #include "eh_ruen.h"
 #include "eh_pointing.h"
@@ -1467,6 +1471,17 @@ static int clock_option_set(const qmk_settings_proto_t *proto, const void *setti
 }
 #endif
 
+#ifdef EH_DATE_SETTINGS_ENABLE
+static int date_option_get(const qmk_settings_proto_t *proto, void *setting, size_t maxsz) {
+    if (maxsz < 1) return -1;
+    *(uint8_t *)setting = eh_date_get(proto->qsid - 357); return 0;
+}
+static int date_option_set(const qmk_settings_proto_t *proto, const void *setting, size_t maxsz) {
+    if (maxsz < 1 || !eh_date_set(proto->qsid - 357, *(const uint8_t *)setting)) return -1;
+    display_apply_clock_settings(); display_apply_brightness(); return 0;
+}
+#endif
+
 qmk_settings_proto_t kb_protos[KB_SETTINGS_NPROTOS] PROGMEM = {
     // clang-format off
     DECLARE_SETTING(100, ruen_toggle_get, ruen_toggle_set),
@@ -1632,6 +1647,24 @@ qmk_settings_proto_t kb_protos[KB_SETTINGS_NPROTOS] PROGMEM = {
     DECLARE_SETTING(354, clock_color_get, clock_color_set),
     DECLARE_SETTING(355, clock_color_get, clock_color_set),
     DECLARE_SETTING(356, clock_color_get, clock_color_set),
+#ifdef EH_DATE_SETTINGS_ENABLE
+    DECLARE_SETTING(357, date_option_get, date_option_set),
+    DECLARE_SETTING(358, date_option_get, date_option_set),
+    DECLARE_SETTING(359, date_option_get, date_option_set),
+    DECLARE_SETTING(360, date_option_get, date_option_set),
+    DECLARE_SETTING(361, date_option_get, date_option_set),
+    DECLARE_SETTING(362, date_option_get, date_option_set),
+    DECLARE_SETTING(363, date_option_get, date_option_set),
+    DECLARE_SETTING(364, date_option_get, date_option_set),
+    DECLARE_SETTING(365, date_option_get, date_option_set),
+    DECLARE_SETTING(366, date_option_get, date_option_set),
+    DECLARE_SETTING(367, date_option_get, date_option_set),
+    DECLARE_SETTING(368, date_option_get, date_option_set),
+    DECLARE_SETTING(369, date_option_get, date_option_set),
+    DECLARE_SETTING(370, date_option_get, date_option_set),
+    DECLARE_SETTING(371, date_option_get, date_option_set),
+
+#endif
 #endif
 #if defined(EH_KEYBOARD_SPLIT_POINTING_V2)
     DECLARE_SETTING(324, modules_select_get, modules_select_set),

@@ -31,6 +31,7 @@ typedef enum {
     _LAYOUT,
     _MEDIA_ARTIST,
     _MEDIA_TITLE,
+    _DATE,
 
     _RELAY_FROM_DEVICE = 0xCC,
     _RELAY_TO_DEVICE,
@@ -64,6 +65,18 @@ bool process_raw_hid_data(uint8_t *data, uint8_t length) {
             }
             break;
 
+        case _DATE: {
+            if (length < 5) break;
+            uint16_t year = data[3] | ((uint16_t)data[4] << 8);
+            uint8_t month = data[2], day = data[1];
+            static const uint8_t days[] = {31,28,31,30,31,30,31,31,30,31,30,31};
+            if (year < 2000 || year > 9999 || month < 1 || month > 12) break;
+            uint8_t maximum = days[month-1] + (month == 2 && year % 4 == 0 && (year % 100 != 0 || year % 400 == 0));
+            if (!day || day > maximum) break;
+            hid_data.year = year; hid_data.month = month; hid_data.day = day; hid_data.date_valid = true;
+            new_hid_data = true;
+            break;
+        }
         case _VOLUME:
             hid_data.volume         = data[1];
             hid_data.volume_changed = true;

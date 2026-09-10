@@ -2,6 +2,7 @@
 #include <lvgl.h>
 
 #include "ergohaven.h"
+#include "src/eh_ruen.h"
 #include "../eh_settings.h"
 #include "lvgl_helpers.h"
 #include "hid.h"
@@ -42,6 +43,34 @@ LV_FONT_DECLARE(eh_font_clock_liberation_narrow_40);
 LV_FONT_DECLARE(eh_font_clock_liberation_narrow_48);
 #endif
 
+#ifdef EH_DATE_SETTINGS_ENABLE
+#include "eh_date_settings.h"
+LV_FONT_DECLARE(eh_font_clock_montserrat_64);
+LV_FONT_DECLARE(eh_font_clock_montserrat_28);
+LV_FONT_DECLARE(eh_font_clock_montserrat_40);
+LV_FONT_DECLARE(eh_font_clock_montserrat_48);
+
+LV_FONT_DECLARE(eh_font_clock_ubuntu_sans_64);
+LV_FONT_DECLARE(eh_font_clock_ubuntu_mono_64);
+LV_FONT_DECLARE(eh_font_clock_liberation_mono_64);
+LV_FONT_DECLARE(eh_font_clock_dejavu_sans_64);
+LV_FONT_DECLARE(eh_font_clock_dejavu_serif_64);
+LV_FONT_DECLARE(eh_font_clock_dejavu_mono_64);
+LV_FONT_DECLARE(eh_font_clock_liberation_sans_64);
+LV_FONT_DECLARE(eh_font_clock_liberation_serif_64);
+LV_FONT_DECLARE(eh_font_clock_liberation_narrow_64);
+LV_FONT_DECLARE(eh_font_date_montserrat_20);
+LV_FONT_DECLARE(eh_font_date_ubuntu_sans_20);
+LV_FONT_DECLARE(eh_font_date_ubuntu_mono_20);
+LV_FONT_DECLARE(eh_font_date_liberation_mono_20);
+LV_FONT_DECLARE(eh_font_date_dejavu_sans_20);
+LV_FONT_DECLARE(eh_font_date_dejavu_serif_20);
+LV_FONT_DECLARE(eh_font_date_dejavu_mono_20);
+LV_FONT_DECLARE(eh_font_date_liberation_sans_20);
+LV_FONT_DECLARE(eh_font_date_liberation_serif_20);
+LV_FONT_DECLARE(eh_font_date_liberation_narrow_20);
+static lv_obj_t *label_date;
+#endif
 static lv_obj_t *screen_home;
 #ifdef EH_STANDBY_BACKGROUND_ENABLE
 static lv_obj_t *standby_background;
@@ -51,23 +80,15 @@ static lv_obj_t *label_product;
 static lv_obj_t *label_time;
 static lv_obj_t *label_time_colon;
 static lv_obj_t *label_time_minutes;
+static lv_obj_t *standby_header;
 static lv_obj_t *label_layer_icon;
 static lv_obj_t *label_layer;
 static lv_obj_t *label_mac;
 static lv_obj_t *label_layout;
-static lv_obj_t *label_shift;
-static lv_obj_t *label_ctrl;
-static lv_obj_t *label_alt;
-static lv_obj_t *label_gui;
-static lv_obj_t *label_num;
-static lv_obj_t *label_caps;
-static lv_obj_t *label_scroll;
 static lv_obj_t *label_hid_media_artist;
 static lv_obj_t *label_hid_media_title;
-static lv_obj_t *screen_home_mods;
 static lv_obj_t *screen_home_media;
 static lv_obj_t *clock_custom;
-static bool      modifiers_context_visible = true;
 static uint8_t   clock_hours;
 static uint8_t   clock_minutes;
 static uint8_t   flip_previous_digits[4];
@@ -85,10 +106,6 @@ static uint8_t standby_background_frame;
 #endif
 
 #define FLIP_ANIMATION_MS 360
-
-static lv_opa_t opacity_from_percent(uint8_t opacity) {
-    return (lv_opa_t)((uint16_t)MIN(opacity, 100) * LV_OPA_COVER / 100);
-}
 
 #ifdef EH_STANDBY_BACKGROUND_ENABLE
 static void refresh_standby_background(void) {
@@ -161,6 +178,8 @@ enum {
 };
 
 static void apply_clock_element_visibility(void) {
+    // Encoder rotation must not hide an already visible standby clock/date.
+    // Only physical matrix activity starts a new appearance-delay interval.
     bool clock_visible = get_clock_visible();
     toggle_hidden(label_time, clock_visible);
     toggle_hidden(label_time_colon, clock_visible && clock_colon_visible);
@@ -172,25 +191,27 @@ static void apply_clock_element_visibility(void) {
     toggle_hidden(label_layer, info_visible);
     toggle_hidden(label_mac, info_visible && split_get_mac());
     toggle_hidden(label_layout, info_visible);
+    lv_coord_t name_width = split_get_mac() ? 90 : 120;
+    if (lv_obj_get_style_width(label_layer,0) != name_width) lv_obj_set_width(label_layer,name_width);
 
-    toggle_hidden(screen_home_mods, get_clock_modifiers_visible() && modifiers_context_visible);
+
 }
 
 static const lv_font_t *clock_font(void) {
 #ifdef EH_CLOCK_FONT_CHOICES_ENABLE
-    static const lv_font_t *const fonts[10][3] = {
-        {&lv_font_montserrat_28, &lv_font_montserrat_40, &lv_font_montserrat_48},
-        {&eh_font_clock_ubuntu_sans_28, &eh_font_clock_ubuntu_sans_40, &eh_font_clock_ubuntu_sans_48},
-        {&eh_font_clock_ubuntu_mono_28, &eh_font_clock_ubuntu_mono_40, &eh_font_clock_ubuntu_mono_48},
-        {&eh_font_clock_liberation_mono_28, &eh_font_clock_liberation_mono_40, &eh_font_clock_liberation_mono_48},
-        {&eh_font_clock_dejavu_sans_28, &eh_font_clock_dejavu_sans_40, &eh_font_clock_dejavu_sans_48},
-        {&eh_font_clock_dejavu_serif_28, &eh_font_clock_dejavu_serif_40, &eh_font_clock_dejavu_serif_48},
-        {&eh_font_clock_dejavu_mono_28, &eh_font_clock_dejavu_mono_40, &eh_font_clock_dejavu_mono_48},
-        {&eh_font_clock_liberation_sans_28, &eh_font_clock_liberation_sans_40, &eh_font_clock_liberation_sans_48},
-        {&eh_font_clock_liberation_serif_28, &eh_font_clock_liberation_serif_40, &eh_font_clock_liberation_serif_48},
-        {&eh_font_clock_liberation_narrow_28, &eh_font_clock_liberation_narrow_40, &eh_font_clock_liberation_narrow_48},
+    static const lv_font_t *const fonts[10][4] = {
+        {&eh_font_clock_montserrat_28, &eh_font_clock_montserrat_40, &eh_font_clock_montserrat_48, &eh_font_clock_montserrat_64},
+        {&eh_font_clock_ubuntu_sans_28, &eh_font_clock_ubuntu_sans_40, &eh_font_clock_ubuntu_sans_48, &eh_font_clock_ubuntu_sans_64},
+        {&eh_font_clock_ubuntu_mono_28, &eh_font_clock_ubuntu_mono_40, &eh_font_clock_ubuntu_mono_48, &eh_font_clock_ubuntu_mono_64},
+        {&eh_font_clock_liberation_mono_28, &eh_font_clock_liberation_mono_40, &eh_font_clock_liberation_mono_48, &eh_font_clock_liberation_mono_64},
+        {&eh_font_clock_dejavu_sans_28, &eh_font_clock_dejavu_sans_40, &eh_font_clock_dejavu_sans_48, &eh_font_clock_dejavu_sans_64},
+        {&eh_font_clock_dejavu_serif_28, &eh_font_clock_dejavu_serif_40, &eh_font_clock_dejavu_serif_48, &eh_font_clock_dejavu_serif_64},
+        {&eh_font_clock_dejavu_mono_28, &eh_font_clock_dejavu_mono_40, &eh_font_clock_dejavu_mono_48, &eh_font_clock_dejavu_mono_64},
+        {&eh_font_clock_liberation_sans_28, &eh_font_clock_liberation_sans_40, &eh_font_clock_liberation_sans_48, &eh_font_clock_liberation_sans_64},
+        {&eh_font_clock_liberation_serif_28, &eh_font_clock_liberation_serif_40, &eh_font_clock_liberation_serif_48, &eh_font_clock_liberation_serif_64},
+        {&eh_font_clock_liberation_narrow_28, &eh_font_clock_liberation_narrow_40, &eh_font_clock_liberation_narrow_48, &eh_font_clock_liberation_narrow_64},
     };
-    return fonts[MIN(get_clock_style(), 9)][MIN(get_clock_size(), 2)];
+    return fonts[MIN(get_clock_style(), 9)][MIN(get_clock_size(), 3)];
 #else
     static const lv_font_t *const fonts[] = {&lv_font_montserrat_28, &lv_font_montserrat_40, &lv_font_montserrat_48};
     return fonts[MIN(get_clock_size(), 2)];
@@ -198,8 +219,8 @@ static const lv_font_t *clock_font(void) {
 }
 
 static lv_coord_t clock_height(void) {
-    static const lv_coord_t heights[] = {32, 46, 60};
-    return heights[MIN(get_clock_size(), 2)];
+    static const lv_coord_t heights[] = {32, 46, 60, 78};
+    return heights[MIN(get_clock_size(), 3)];
 }
 
 static lv_coord_t clock_aligned_x(const lv_area_t *area, lv_coord_t width) {
@@ -207,37 +228,81 @@ static lv_coord_t clock_aligned_x(const lv_area_t *area, lv_coord_t width) {
         case 0:
             return area->x1 + 8;
         case 2:
-            return area->x2 - width - 8;
+            return area->x2 + 1 - width - 8;
         default:
             return area->x1 + (lv_area_get_width(area) - width) / 2;
     }
 }
 
-static lv_coord_t clock_text_width(const char *text, const lv_font_t *font) {
-    return lv_txt_get_width(text, strlen(text), font, 0, LV_TEXT_FLAG_NONE);
+/* Vertical ink bounds relative to the label, including its font padding. */
+static bool label_ink_y(lv_obj_t *label, lv_coord_t *top, lv_coord_t *bottom) {
+    if (!label) return false;
+    const lv_font_t *font = lv_obj_get_style_text_font(label, LV_PART_MAIN);
+    const char *text = lv_label_get_text(label);
+    uint32_t index = 0, letter;
+    *top = 32767; *bottom = -32767;
+    while ((letter = _lv_txt_encoded_next(text, &index))) {
+        lv_font_glyph_dsc_t glyph;
+        if (!lv_font_get_glyph_dsc(font, &glyph, letter, 0) || !glyph.box_w || !glyph.box_h) continue;
+        lv_coord_t y = lv_obj_get_style_pad_top(label, 0) + font->line_height - font->base_line - glyph.box_h - glyph.ofs_y;
+        *top = MIN(*top, y); *bottom = MAX(*bottom, y + glyph.box_h);
+    }
+    return *bottom > *top;
 }
 
+/* Use the same slots even while an element is disabled/delayed, so toggles do
+ * not make the clock jump. Include the colon on its blink-off frame as well. */
+static lv_coord_t clock_vertical_center_twice(void) {
+    lv_coord_t header_bottom = 36, date_top = 112;
+#ifdef EH_DATE_SETTINGS_ENABLE
+    lv_coord_t top, bottom, visible_bottom = -32767;
+    lv_obj_t *header_labels[] = {label_layer_icon, label_layer, label_layout, label_mac};
+    for (unsigned i = 0; i < ARRAY_SIZE(header_labels); i++) {
+        if (header_labels[i] == label_mac && !split_get_mac()) continue;
+        if (label_ink_y(header_labels[i], &top, &bottom)) visible_bottom = MAX(visible_bottom, 8 + bottom);
+    }
+    if (visible_bottom != -32767) header_bottom = visible_bottom;
+    if (label_ink_y(label_date, &top, &bottom)) date_top = 112 + top;
+#endif
+    return header_bottom + date_top;
+}
+
+/* Center the visible glyphs, not the font's advance/baseline padding. The
+ * colon participates even while hidden, keeping the blinking clock stationary. */
 static void position_clock_labels(void) {
     const lv_font_t *font = clock_font();
-    lv_coord_t widest_digit = 0;
-    for (char digit = '0'; digit <= '9'; digit++) {
-        char text[2] = {digit, '\0'};
-        widest_digit = MAX(widest_digit, clock_text_width(text, font));
+    lv_obj_t *labels[] = {label_time, label_time_colon, label_time_minutes};
+    lv_coord_t starts[3], widths[3], pen = 0;
+    lv_coord_t left = 32767, top = 32767, right = -32767, bottom = -32767;
+    for (uint8_t part = 0; part < 3; part++) {
+        const char *text = lv_label_get_text(labels[part]);
+        starts[part] = pen;
+        lv_coord_t local = 0, local_right = 0;
+        for (uint8_t n = 0; text[n]; n++) {
+            lv_font_glyph_dsc_t glyph;
+            if (!lv_font_get_glyph_dsc(font, &glyph, text[n], text[n + 1])) continue;
+            if (glyph.box_w && glyph.box_h) {
+                lv_coord_t gx = pen + local + glyph.ofs_x;
+                lv_coord_t gy = font->line_height - font->base_line - glyph.box_h - glyph.ofs_y;
+                left = MIN(left, gx);
+                right = MAX(right, gx + glyph.box_w);
+                top = MIN(top, gy);
+                bottom = MAX(bottom, gy + glyph.box_h);
+                local_right = MAX(local_right, local + glyph.ofs_x + glyph.box_w);
+            }
+            local += glyph.adv_w;
+        }
+        widths[part] = MAX(local, local_right) + 2;
+        pen += local;
     }
-    lv_coord_t pair_width  = widest_digit * 2;
-    lv_coord_t colon_width = clock_text_width(":", font);
-    lv_coord_t total_width = pair_width * 2 + colon_width;
-    lv_area_t area = {.x1 = 10, .y1 = 20, .x2 = 229, .y2 = 99};
-    lv_coord_t x = clock_aligned_x(&area, total_width);
-    lv_coord_t y = 36 + (48 - font->line_height) / 2;
-    lv_coord_t height = font->line_height + 4;
-
-    lv_obj_set_pos(label_time, x, y);
-    lv_obj_set_size(label_time, pair_width, height);
-    lv_obj_set_pos(label_time_colon, x + pair_width, y);
-    lv_obj_set_size(label_time_colon, colon_width, height);
-    lv_obj_set_pos(label_time_minutes, x + pair_width + colon_width, y);
-    lv_obj_set_size(label_time_minutes, pair_width, height);
+    if (right <= left || bottom <= top) return;
+    const lv_area_t area = {.x1 = 10, .y1 = 28, .x2 = 229, .y2 = 107};
+    lv_coord_t x = clock_aligned_x(&area, right - left) - left;
+    lv_coord_t y = (clock_vertical_center_twice() - (bottom - top)) / 2 - top;
+    for (uint8_t part = 0; part < 3; part++) {
+        lv_obj_set_pos(labels[part], x + starts[part], y);
+        lv_obj_set_size(labels[part], widths[part], font->line_height + 4);
+    }
 }
 
 static void update_clock_label(void) {
@@ -245,6 +310,7 @@ static void update_clock_label(void) {
     lv_label_set_text_fmt(label_time, "%02d", clock_hours);
     lv_label_set_text(label_time_colon, ":");
     lv_label_set_text_fmt(label_time_minutes, "%02d", clock_minutes);
+    position_clock_labels();
     toggle_hidden(label_time_colon, get_clock_visible() && clock_colon_visible);
 }
 
@@ -611,14 +677,69 @@ static void draw_clock_event(lv_event_t *event) {
     }
 }
 
+#ifdef EH_DATE_SETTINGS_ENABLE
+static const lv_font_t *standby_text_font(void) {
+    static const lv_font_t *const fonts[10] = {
+        &eh_font_date_montserrat_20,
+        &eh_font_date_ubuntu_sans_20,
+        &eh_font_date_ubuntu_mono_20,
+        &eh_font_date_liberation_mono_20,
+        &eh_font_date_dejavu_sans_20,
+        &eh_font_date_dejavu_serif_20,
+        &eh_font_date_dejavu_mono_20,
+        &eh_font_date_liberation_sans_20,
+        &eh_font_date_liberation_serif_20,
+        &eh_font_date_liberation_narrow_20,
+    };
+    return fonts[MIN(get_clock_style(),9)];
+}
+#endif
+
+#ifdef EH_DATE_SETTINGS_ENABLE
+static void update_date(void) {
+    if (!label_date) return;
+    hid_data_t *hid = get_hid_data();
+    static const uint32_t delays[] = {0,5000,10000,15000,30000,60000,120000,20000};
+    uint32_t delay=delays[MIN(eh_date_get(9),7)];
+    toggle_hidden(label_date, eh_date_get(0) && delay && hid->date_valid && is_hid_active() && last_matrix_activity_elapsed() >= delay);
+    static uint8_t previous[10];
+    static uint16_t previous_year;
+    static uint8_t previous_month,previous_day;
+    uint8_t current[10]; for(unsigned i=0;i<10;i++) current[i]=eh_date_get(i);
+    // Date follows the clock family; its text size matches the layer line.
+    current[5] = get_clock_style(); current[6] = 20;
+    if(!memcmp(previous,current,10) && previous_year==hid->year && previous_month==hid->month && previous_day==hid->day) return;
+    memcpy(previous,current,10); previous_year=hid->year; previous_month=hid->month; previous_day=hid->day;
+    uint8_t format = eh_date_get(8);
+    char text[16];
+    if (format == 1) snprintf(text,sizeof(text),"%02u-%02u-%04u",hid->day,hid->month,hid->year);
+    else if (format == 2) snprintf(text,sizeof(text),"%02u/%02u/%04u",hid->day,hid->month,hid->year);
+    else snprintf(text,sizeof(text),"%02u.%02u.%04u",hid->day,hid->month,hid->year);
+    if(strcmp(lv_label_get_text(label_date),text)) lv_label_set_text(label_date,text);
+    const lv_font_t *date_font = standby_text_font();
+    lv_obj_set_style_text_font(label_date,date_font,0);
+    lv_obj_set_style_pad_top(label_date,MAX(0,(24-date_font->line_height)/2),0);
+    lv_obj_set_style_text_color(label_date,lv_color_make(get_clock_text_red(),get_clock_text_green(),get_clock_text_blue()),0);
+    lv_obj_set_style_text_opa(label_date,LV_OPA_COVER,0);
+    lv_obj_set_style_text_align(label_date,LV_TEXT_ALIGN_CENTER,0);
+    position_clock_labels();
+
+}
+#endif
+
 void screen_home_apply_clock_settings(void) {
     if (screen_home == NULL) return;
+#ifdef EH_DATE_SETTINGS_ENABLE
+    update_date();
+    lv_obj_set_style_text_color(label_date,lv_color_make(get_clock_text_red(),get_clock_text_green(),get_clock_text_blue()),0);
+#endif
     lv_color_t text_color = lv_color_make(get_clock_text_red(), get_clock_text_green(), get_clock_text_blue());
     lv_color_t background = lv_color_make(get_clock_background_red(), get_clock_background_green(), get_clock_background_blue());
-    lv_color_t info_color = lv_color_make(get_clock_info_red(), get_clock_info_green(), get_clock_info_blue());
-    lv_color_t modifiers_color = lv_color_make(get_clock_modifiers_red(), get_clock_modifiers_green(), get_clock_modifiers_blue());
+    lv_color_t info_color = text_color;
+
     lv_obj_set_style_bg_color(screen_home, background, 0);
 #ifdef EH_STANDBY_BACKGROUND_ENABLE
+    lv_obj_set_style_bg_color(standby_background_dim, background, 0);
     lv_obj_set_style_bg_opa(standby_background_dim, (lv_opa_t)((uint16_t)get_clock_background_dim() * LV_OPA_COVER / 100), 0);
     toggle_hidden(standby_background_dim, eh_background_is_valid() && get_clock_background_dim() > 0);
 #endif
@@ -626,26 +747,39 @@ void screen_home_apply_clock_settings(void) {
     for (uint8_t index = 0; index < ARRAY_SIZE(time_labels); index++) {
         lv_obj_set_style_text_color(time_labels[index], text_color, 0);
         lv_obj_set_style_text_font(time_labels[index], clock_font(), LV_PART_MAIN);
-        lv_obj_set_style_opa(time_labels[index], opacity_from_percent(get_clock_opacity()), 0);
+        lv_obj_set_style_opa(time_labels[index], LV_OPA_COVER, 0);
     }
-    lv_obj_set_style_opa(clock_custom, opacity_from_percent(get_clock_opacity()), 0);
+    lv_obj_set_style_opa(clock_custom, LV_OPA_COVER, 0);
     lv_obj_t *info_labels[] = {label_layer_icon, label_layer, label_mac, label_layout};
     for (uint8_t index = 0; index < ARRAY_SIZE(info_labels); index++) {
         lv_obj_set_style_text_color(info_labels[index], info_color, 0);
-        lv_obj_set_style_text_opa(info_labels[index], opacity_from_percent(get_clock_info_opacity()), 0);
+        lv_obj_set_style_text_opa(info_labels[index], LV_OPA_COVER, 0);
     }
     lv_obj_set_style_text_color(label_product, info_color, 0);
     lv_obj_set_style_text_color(label_hid_media_title, info_color, 0);
     lv_obj_set_style_text_color(label_hid_media_artist, info_color, 0);
-    lv_obj_t *status_labels[] = {label_shift, label_ctrl, label_alt, label_gui, label_num, label_caps, label_scroll};
-    for (uint8_t index = 0; index < ARRAY_SIZE(status_labels); index++) {
-        lv_obj_set_style_text_color(status_labels[index], modifiers_color, 0);
-        lv_obj_set_style_bg_color(status_labels[index], modifiers_color, LV_STATE_PRESSED);
-        lv_obj_set_style_text_color(status_labels[index], background, LV_STATE_PRESSED);
-        lv_obj_set_style_opa(status_labels[index], opacity_from_percent(get_clock_modifiers_opacity()), 0);
+#ifdef EH_DATE_SETTINGS_ENABLE
+    lv_obj_set_style_text_font(label_layer,standby_text_font(),0);
+    lv_obj_set_style_text_font(label_layout,standby_text_font(),0);
+    lv_obj_set_style_pad_top(label_layer,MAX(0,(28-standby_text_font()->line_height)/2),0);
+    lv_obj_set_style_pad_top(label_layout,MAX(0,(28-standby_text_font()->line_height)/2),0);
+    lv_obj_set_style_pad_top(label_layer_icon,MAX(0,(28-eh_font_montserrat_20.line_height)/2),0);
+    lv_obj_set_style_pad_top(label_mac,MAX(0,(28-eh_font_montserrat_20.line_height)/2),0);
+    lv_obj_set_style_base_dir(label_layer,LV_BASE_DIR_LTR,0);
+    lv_obj_set_style_anim_speed(label_layer,25,0);
+    lv_color_t media_color=text_color;
+    lv_obj_t *media_labels[]={label_hid_media_title,label_hid_media_artist};
+    for(unsigned i=0;i<2;i++) {
+        lv_obj_set_style_text_font(media_labels[i],standby_text_font(),0);
+        lv_obj_set_style_text_color(media_labels[i],media_color,0);
+        lv_obj_set_style_pad_top(media_labels[i],MAX(0,((i?30:36)-standby_text_font()->line_height)/2),0);
+        lv_obj_set_style_base_dir(media_labels[i],LV_BASE_DIR_LTR,0);
+        lv_obj_set_style_anim_speed(media_labels[i],25,0);
     }
-    lv_obj_set_style_text_align(label_time, LV_TEXT_ALIGN_RIGHT, 0);
-    lv_obj_set_style_text_align(label_time_colon, LV_TEXT_ALIGN_CENTER, 0);
+    toggle_hidden(screen_home_media,is_hid_active() && eh_date_get(11));
+#endif
+    lv_obj_set_style_text_align(label_time, LV_TEXT_ALIGN_LEFT, 0);
+    lv_obj_set_style_text_align(label_time_colon, LV_TEXT_ALIGN_LEFT, 0);
     lv_obj_set_style_text_align(label_time_minutes, LV_TEXT_ALIGN_LEFT, 0);
     position_clock_labels();
     clock_colon_visible = true;
@@ -683,26 +817,34 @@ void screen_home_init(void) {
     lv_label_set_text(label_product, EH_SHORT_PRODUCT_NAME);
 
     label_time = lv_label_create(screen_home);
-    lv_obj_set_style_text_font(label_time, &lv_font_montserrat_48, LV_PART_MAIN);
-    lv_obj_set_style_text_align(label_time, LV_TEXT_ALIGN_RIGHT, 0);
+    lv_obj_set_style_text_font(label_time, clock_font(), LV_PART_MAIN);
+    lv_obj_set_style_text_align(label_time, LV_TEXT_ALIGN_LEFT, 0);
     lv_label_set_text(label_time, "00");
     lv_obj_add_flag(label_time, LV_OBJ_FLAG_HIDDEN);
 
     label_time_colon = lv_label_create(screen_home);
-    lv_obj_set_style_text_font(label_time_colon, &lv_font_montserrat_48, LV_PART_MAIN);
-    lv_obj_set_style_text_align(label_time_colon, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_font(label_time_colon, clock_font(), LV_PART_MAIN);
+    lv_obj_set_style_text_align(label_time_colon, LV_TEXT_ALIGN_LEFT, 0);
     lv_label_set_text(label_time_colon, ":");
     lv_obj_add_flag(label_time_colon, LV_OBJ_FLAG_HIDDEN);
 
     label_time_minutes = lv_label_create(screen_home);
-    lv_obj_set_style_text_font(label_time_minutes, &lv_font_montserrat_48, LV_PART_MAIN);
+    lv_obj_set_style_text_font(label_time_minutes, clock_font(), LV_PART_MAIN);
     lv_obj_set_style_text_align(label_time_minutes, LV_TEXT_ALIGN_LEFT, 0);
     lv_label_set_text(label_time_minutes, "00");
     lv_obj_add_flag(label_time_minutes, LV_OBJ_FLAG_HIDDEN);
 
+#ifdef EH_DATE_SETTINGS_ENABLE
+    label_date = lv_label_create(screen_home);
+    lv_obj_set_pos(label_date,10,112);
+    lv_obj_set_size(label_date,220,24);
+    lv_label_set_long_mode(label_date,LV_LABEL_LONG_CLIP);
+    lv_label_set_text(label_date,"");
+    lv_obj_add_flag(label_date,LV_OBJ_FLAG_HIDDEN);
+#endif
     clock_custom = lv_obj_create(screen_home);
-    lv_obj_set_pos(clock_custom, 0, 20);
-    lv_obj_set_size(clock_custom, 240, 80);
+    lv_obj_set_pos(clock_custom, 0, 36);
+    lv_obj_set_size(clock_custom, 240, 76);
     lv_obj_set_style_bg_opa(clock_custom, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(clock_custom, 0, 0);
     lv_obj_set_style_pad_all(clock_custom, 0, 0);
@@ -711,91 +853,89 @@ void screen_home_init(void) {
     lv_obj_add_flag(clock_custom, LV_OBJ_FLAG_HIDDEN);
     lv_timer_create(update_clock_colon, 500, NULL);
 
-    label_layer_icon = lv_label_create(screen_home);
+    standby_header = lv_obj_create(screen_home);
+    lv_obj_add_style(standby_header, &style_container, 0);
+    lv_obj_set_pos(standby_header, 26, 8);
+    lv_obj_set_size(standby_header, 188, 28);
+    lv_obj_set_style_pad_all(standby_header, 0, 0);
+    lv_obj_set_style_border_width(standby_header, 0, 0);
+    lv_obj_set_style_radius(standby_header, 0, 0);
+    lv_obj_set_style_bg_opa(standby_header, LV_OPA_TRANSP, 0);
+    lv_obj_set_scrollbar_mode(standby_header, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_clear_flag(standby_header, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_OVERFLOW_VISIBLE);
+
+    label_layer_icon = lv_label_create(standby_header);
     lv_label_set_text(label_layer_icon, EH_SYMBOL_LAYER);
-    lv_obj_set_pos(label_layer_icon, 0, 100);
-    lv_obj_set_size(label_layer_icon, 26, 28);
-    lv_obj_set_style_text_align(label_layer_icon, LV_TEXT_ALIGN_RIGHT, 0);
+    lv_obj_set_pos(label_layer_icon, 0, 0);
+    lv_obj_set_size(label_layer_icon, 20, 28);
+    lv_obj_set_style_text_align(label_layer_icon, LV_TEXT_ALIGN_LEFT, 0);
     lv_obj_set_style_text_font(label_layer_icon, &eh_font_montserrat_20, LV_PART_MAIN);
 
-    label_layer = lv_label_create(screen_home);
+    label_layer = lv_label_create(standby_header);
     lv_label_set_text(label_layer, "");
-    lv_obj_set_pos(label_layer, 30, 100);
-    lv_obj_set_size(label_layer, 115, 28);
+    lv_obj_set_pos(label_layer, 26, 0);
+    lv_obj_set_size(label_layer, 120, 28);
     lv_label_set_long_mode(label_layer, LV_LABEL_LONG_SCROLL_CIRCULAR);
     lv_obj_set_style_text_align(label_layer, LV_TEXT_ALIGN_LEFT, 0);
     lv_obj_set_style_text_font(label_layer, &eh_font_montserrat_20, LV_PART_MAIN);
 
-    label_mac = lv_label_create(screen_home);
+    label_mac = lv_label_create(standby_header);
     lv_label_set_text(label_mac, EH_SYMBOL_MAC);
-    lv_obj_set_pos(label_mac, 145, 100);
-    lv_obj_set_size(label_mac, 30, 20);
+    lv_obj_set_pos(label_mac, 122, 0);
+    lv_obj_set_size(label_mac, 24, 28);
     lv_obj_set_style_text_align(label_mac, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_font(label_mac, &eh_font_montserrat_20, LV_PART_MAIN);
     toggle_hidden(label_mac, false);
 
-    label_layout = lv_label_create(screen_home);
+    label_layout = lv_label_create(standby_header);
     lv_label_set_text(label_layout, "");
-    lv_obj_set_pos(label_layout, 175, 100);
-    lv_obj_set_size(label_layout, 65, 20);
-    lv_obj_set_style_text_align(label_layout, LV_TEXT_ALIGN_LEFT, 0);
+    lv_obj_set_pos(label_layout, 152, 0);
+    lv_obj_set_size(label_layout, 36, 28);
+    lv_obj_set_style_text_align(label_layout, LV_TEXT_ALIGN_RIGHT, 0);
     lv_obj_set_style_text_font(label_layout, &eh_font_montserrat_20, LV_PART_MAIN);
-
-    screen_home_mods = lv_obj_create(screen_home);
-    lv_obj_add_style(screen_home_mods, &style_container, 0);
-    use_flex_row(screen_home_mods);
-    lv_obj_set_pos(screen_home_mods, 0, 130);
-    lv_obj_set_size(screen_home_mods, 240, 100);
-
-    label_gui   = create_button(screen_home_mods, "GUI", &style_button, &style_button_active);
-    label_alt   = create_button(screen_home_mods, "ALT", &style_button, &style_button_active);
-    label_ctrl  = create_button(screen_home_mods, "CTL", &style_button, &style_button_active);
-    label_shift = create_button(screen_home_mods, "SFT", &style_button, &style_button_active);
-
-    label_num    = create_button(screen_home_mods, "NUM", &style_button, &style_button_active);
-    label_caps   = create_button(screen_home_mods, "CAPS", &style_button, &style_button_active);
-    label_scroll = create_button(screen_home_mods, "SCRL", &style_button, &style_button_active);
 
     screen_home_media = lv_obj_create(screen_home);
     lv_obj_add_style(screen_home_media, &style_container, 0);
     toggle_hidden(screen_home_media, false);
-    use_flex_row(screen_home_media);
+    lv_obj_set_style_pad_all(screen_home_media, 0, 0);
     lv_obj_set_pos(screen_home_media, 0, 130);
-    lv_obj_set_size(screen_home_media, 240, 130);
+    lv_obj_set_size(screen_home_media, 240, 90);
 
     label_hid_media_title = lv_label_create(screen_home_media);
     lv_label_set_text(label_hid_media_title, "");
-    lv_label_set_long_mode(label_hid_media_title, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(label_hid_media_title, lv_pct(95));
+    lv_label_set_long_mode(label_hid_media_title, LV_LABEL_LONG_SCROLL_CIRCULAR);
+    lv_obj_set_pos(label_hid_media_title,10,7);
+    lv_obj_set_size(label_hid_media_title,220,36);
     lv_obj_set_style_text_align(label_hid_media_title, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_font(label_hid_media_title, &eh_font_montserrat_28, LV_PART_MAIN);
-    lv_obj_set_style_pad_top(label_hid_media_title, 0, 0);
+    lv_obj_set_style_pad_top(label_hid_media_title, MAX(0,(36-eh_font_montserrat_28.line_height)/2), 0);
     lv_obj_set_style_pad_bottom(label_hid_media_title, 0, 0);
 
     label_hid_media_artist = lv_label_create(screen_home_media);
     lv_label_set_text(label_hid_media_artist, "");
-    lv_label_set_long_mode(label_hid_media_artist, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(label_hid_media_artist, lv_pct(95));
+    lv_label_set_long_mode(label_hid_media_artist, LV_LABEL_LONG_SCROLL_CIRCULAR);
+    lv_obj_set_pos(label_hid_media_artist,10,48);
+    lv_obj_set_size(label_hid_media_artist,220,30);
     lv_obj_set_style_text_align(label_hid_media_artist, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_font(label_hid_media_artist, &eh_font_montserrat_20, LV_PART_MAIN);
 
-    lv_obj_set_style_pad_top(label_hid_media_artist, 10, 0);
+    lv_obj_set_style_pad_top(label_hid_media_artist, MAX(0,(30-eh_font_montserrat_20.line_height)/2), 0);
     lv_obj_set_style_text_color(label_hid_media_artist, accent_color_blue, 0);
 
     screen_home_apply_clock_settings();
 }
 
+bool screen_home_is_active(void) { return screen_home && lv_scr_act()==screen_home; }
+
 void screen_home_load(void) {
     lv_label_set_text(label_layer, layer_name(get_current_layer()));
     lv_scr_load(screen_home);
+    display_apply_brightness();
 }
 
 void screen_home_housekeep(void) {
     static uint8_t prev_layer      = 255;
     static uint8_t prev_lang       = -1;
-    static led_t   prev_led_state  = {.raw = 0};
-    static uint8_t prev_mods       = 255;
-    static bool    prev_show_mods  = false;
     static bool    prev_hid_active = false;
     static bool    prev_mac        = false;
 
@@ -806,25 +946,18 @@ void screen_home_housekeep(void) {
 
     uint8_t cur_layer = get_current_layer();
     uint8_t cur_lang  = split_get_lang();
-    led_t   led_state = host_keyboard_led_state();
-    led_state.caps_lock |= split_get_caps_word();
-    uint8_t mods = get_mods() | get_oneshot_mods();
-    bool    mac  = split_get_mac();
-
-    static uint32_t mods_timer = 0;
-    if (mods != 0 || prev_led_state.raw != led_state.raw) {
-        mods_timer = timer_read32();
-    }
-
-    bool show_mods  = timer_elapsed32(mods_timer) < EH_DISPLAY_TIMEOUT_ACTIVITY;
     bool hid_active = is_hid_active();
-
+    bool mac = split_get_mac();
+#ifdef EH_DATE_SETTINGS_ENABLE
+    update_date();
+    apply_clock_element_visibility();
+#endif
     uint32_t activity_elapsed = last_input_activity_elapsed();
     if (activity_elapsed > __UINT32_MAX__ - 1000) // possible overflow on split
         activity_elapsed = 0;
     bool typing = activity_elapsed < 500; // prevent display updates when typing
 
-    if (prev_hid_active != hid_active || (prev_show_mods != show_mods && hid_active)) {
+    if (prev_hid_active != hid_active) {
         if (typing) return;
         if (!hid_active) {
             clock_hours            = 0;
@@ -834,54 +967,35 @@ void screen_home_housekeep(void) {
             lv_obj_invalidate(clock_custom);
         }
         toggle_hidden(label_product, false);
-        modifiers_context_visible = !hid_active || show_mods;
         apply_clock_element_visibility();
-        toggle_hidden(screen_home_media, hid_active && !show_mods);
-        prev_show_mods  = show_mods;
+#ifdef EH_DATE_SETTINGS_ENABLE
+        toggle_hidden(screen_home_media, hid_active && eh_date_get(11));
+#else
+        toggle_hidden(screen_home_media,hid_active);
+#endif
         prev_hid_active = hid_active;
         return;
     }
 
     if (prev_layer != cur_layer || layer_name_updated) {
         lv_label_set_text(label_layer, layer_name(cur_layer));
+        position_clock_labels();
         prev_layer         = cur_layer;
         layer_name_updated = false;
         return;
     }
 
     if (prev_lang != cur_lang) {
-        lv_label_set_text(label_layout, get_layout_label(cur_lang));
+        lv_label_set_text(label_layout, cur_lang == LANG_RU ? "RU" : "EN");
+        position_clock_labels();
         prev_lang = cur_lang;
         return;
     }
 
     if (mac != prev_mac) {
         toggle_hidden(label_mac, get_clock_info_visible() && mac);
-        if (mac) {
-            lv_label_set_text(label_gui, "CMD");
-            lv_label_set_text(label_alt, "OPT");
-        } else {
-            lv_label_set_text(label_gui, "GUI");
-            lv_label_set_text(label_alt, "ALT");
-        }
+        position_clock_labels();
         prev_mac = mac;
-        return;
-    }
-
-    if (led_state.raw != prev_led_state.raw) {
-        toggle_state(label_caps, LV_STATE_PRESSED, led_state.caps_lock);
-        toggle_state(label_num, LV_STATE_PRESSED, led_state.num_lock);
-        toggle_state(label_scroll, LV_STATE_PRESSED, led_state.scroll_lock);
-        prev_led_state.raw = led_state.raw;
-        return;
-    }
-
-    if (mods != prev_mods) {
-        toggle_state(label_shift, LV_STATE_PRESSED, mods & MOD_MASK_SHIFT);
-        toggle_state(label_ctrl, LV_STATE_PRESSED, mods & MOD_MASK_CTRL);
-        toggle_state(label_alt, LV_STATE_PRESSED, mods & MOD_MASK_ALT);
-        toggle_state(label_gui, LV_STATE_PRESSED, mods & MOD_MASK_GUI);
-        prev_mods = mods;
         return;
     }
 
@@ -903,12 +1017,12 @@ void screen_home_housekeep(void) {
             return;
         }
         if (hid->media_title_changed) {
-            lv_label_set_text(label_hid_media_title, hid->media_title);
+            if(strcmp(lv_label_get_text(label_hid_media_title),hid->media_title)) lv_label_set_text(label_hid_media_title, hid->media_title);
             hid->media_title_changed = false;
             return;
         }
         if (hid->media_artist_changed) {
-            lv_label_set_text(label_hid_media_artist, hid->media_artist);
+            if(strcmp(lv_label_get_text(label_hid_media_artist),hid->media_artist)) lv_label_set_text(label_hid_media_artist, hid->media_artist);
             hid->media_artist_changed = false;
             return;
         }

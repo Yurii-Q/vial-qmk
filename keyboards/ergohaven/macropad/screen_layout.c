@@ -1,6 +1,7 @@
 #include "src/display/eh_display.h"
 #include "src/display/eh_keycode_str.h"
 #include "src/display/eh_pictograms.h"
+#include "pictogram_render.h"
 #include "src/display/eh_symbols.h"
 #include "src/display/lvgl_helpers.h"
 #include "ergohaven.h"
@@ -38,7 +39,7 @@ static lv_obj_t *key_cells[NLABELS];
 static lv_obj_t *key_icons[NLABELS];
 static lv_img_dsc_t key_icon_dsc[NLABELS];
 static lv_color_t key_icon_colors[NLABELS];
-static uint8_t key_icon_bits[NLABELS][EH_PICTOGRAM_BYTES];
+static uint8_t key_icon_bits[NLABELS][EH_ICON_RENDER_BYTES];
 static uint16_t  label_kc[NLABELS];
 static char      label_text[NLABELS][24];
 static lv_obj_t *label_layer_icon;
@@ -617,41 +618,53 @@ static void screen_layout_set_key_content(uint8_t index, uint16_t keycode) {
         return;
     }
 
-    // LVGL's ALPHA_1BIT decoder treats a set bit as transparent, while the
-    // editor/storage format treats it as a painted pixel. Keep the on-flash
-    // format intuitive and invert only the small icon used for rendering.
-    for (uint16_t byte = 0; byte < EH_PICTOGRAM_BYTES; byte++) {
-        key_icon_bits[index][byte] = (uint8_t)~bitmap[byte];
-    }
+    eh_render_pictogram(bitmap, eh_pictogram_stored_width(), key_icon_bits[index]);
     key_icon_dsc[index] = (lv_img_dsc_t){
         .header.always_zero = 0,
-        .header.w = EH_PICTOGRAM_WIDTH,
-        .header.h = EH_PICTOGRAM_HEIGHT,
+        .header.w = EH_ICON_RENDER_SIZE,
+        .header.h = EH_ICON_RENDER_SIZE,
         .header.cf = LV_IMG_CF_ALPHA_1BIT,
-        .data_size = EH_PICTOGRAM_BYTES,
+        .data_size = EH_ICON_RENDER_BYTES,
         .data = key_icon_bits[index],
     };
     key_icon_colors[index] = accent_color_blue;
+    lv_img_cache_invalidate_src(&key_icon_dsc[index]);
     lv_img_set_src(key_icons[index], &key_icon_dsc[index]);
+    lv_obj_invalidate(key_icons[index]);
     lv_obj_set_style_img_recolor(key_icons[index], key_pressed[index] ? display_background_color : key_icon_colors[index], 0);
     lv_obj_add_flag(key_labels[index], LV_OBJ_FLAG_HIDDEN);
     lv_obj_clear_flag(key_icons[index], LV_OBJ_FLAG_HIDDEN);
 }
 
-void screen_layout_load(void) {
-    prev_layer = 255;
-    lbl_idx    = 0;
+/* A hidden screen retains its rendered keycodes, so unchanged keycodes do
+ * not imply unchanged icon pixels. Refresh before exposing it on wake. */
+static void screen_layout_refresh_key_content(void) {
+    uint8_t layer = get_current_layer();
+    for (uint8_t index = 0; index < NLABELS; index++) {
+        uint16_t keycode = index < 12 ? get_keycode(layer, 1 + index / 3, index % 3)
+            : index == 13 ? get_keycode(layer, 0, 2) : get_encoder_keycode(layer, 0, index == 14);
+        screen_layout_set_key_content(index, keycode);
+        label_kc[index] = keycode;
+    }
+    // Only acknowledge a generation after its images have actually been drawn.
     pictogram_generation = eh_pictograms_generation();
+    lbl_idx = 0;
+}
+
+void screen_layout_load(void) {
+    prev_layer = get_current_layer();
+    screen_layout_set_layer_name(layer_name(prev_layer));
+    layer_name_updated = false;
+    screen_layout_refresh_key_content();
     lv_scr_load(screen_layout);
+    display_apply_brightness();
 }
 
 void screen_layout_housekeep(void) {
     static uint32_t update_timer = 0;
     finish_key_press_animations();
     if (pictogram_generation != eh_pictograms_generation()) {
-        pictogram_generation = eh_pictograms_generation();
-        for (uint8_t index = 0; index < NLABELS; index++) label_kc[index] = 0xFFFF;
-        lbl_idx = 0;
+        screen_layout_refresh_key_content();
     }
     if (timer_elapsed32(update_timer) < 5) // prevent long display updates
         return;
