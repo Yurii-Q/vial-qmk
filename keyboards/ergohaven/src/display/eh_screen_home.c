@@ -235,6 +235,7 @@ static lv_coord_t clock_aligned_x(const lv_area_t *area, lv_coord_t width) {
     }
 }
 
+#ifdef EH_DATE_SETTINGS_ENABLE
 /* Vertical ink bounds relative to the label, including its font padding. */
 static bool label_ink_y(lv_obj_t *label, lv_coord_t *top, lv_coord_t *bottom) {
     if (!label) return false;
@@ -250,6 +251,7 @@ static bool label_ink_y(lv_obj_t *label, lv_coord_t *top, lv_coord_t *bottom) {
     }
     return *bottom > *top;
 }
+#endif
 
 /* Use the same slots even while an element is disabled/delayed, so toggles do
  * not make the clock jump. Include the colon on its blink-off frame as well. */
