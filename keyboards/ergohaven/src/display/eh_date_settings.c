@@ -12,6 +12,7 @@
 _Static_assert(EXTRA_BASE >= 0xB0000u && EXTRA_BASE + 2 * FLASH_SECTOR_SIZE <= 0xC0000u, "extra settings overlap");
 typedef struct { uint32_t magic, sequence, crc; uint8_t data[64]; uint8_t padding[180]; } record_t;
 _Static_assert(sizeof(record_t) == FLASH_PAGE_SIZE, "journal page size");
+static const uint8_t defaults[] = {0,100,255,255,255,0,1,1,0,7,100,1,255,255,255};
 static uint8_t values[64];
 static bool initialized, dirty;
 static uint32_t sequence, changed_at;
@@ -29,7 +30,6 @@ static void init(void) {
     if (initialized) return;
     initialized = true;
     memset(values, 0xFF, sizeof(values));
-    const uint8_t defaults[] = {0,100,255,255,255,0,1,1,0,7,100,1,255,255,255};
     memcpy(values, defaults, sizeof(defaults));
     const record_t *records = (const record_t *)(XIP_BASE + EXTRA_BASE);
     for (unsigned i=0; i<EXTRA_PAGES; i++) {
@@ -55,8 +55,8 @@ void eh_extra_settings_write(uint8_t offset, const void *data, uint8_t size) {
     init(); if (offset + size > sizeof(values) || !memcmp(values+offset,data,size)) return;
     memcpy(values+offset,data,size); dirty = true; changed_at = timer_read32();
 }
-void eh_extra_settings_housekeep(void) {
-    if (!dirty || timer_elapsed32(changed_at) < 350) return;
+void eh_extra_settings_flush(void) {
+    if (!dirty) return;
     unsigned next = (newest + 1) % EXTRA_PAGES;
     record_t record; memset(&record,0xFF,sizeof(record));
     record.magic=EXTRA_MAGIC; record.sequence=sequence+1; memcpy(record.data,values,sizeof(values)); record.crc=checksum(&record);
@@ -73,4 +73,11 @@ void eh_extra_settings_housekeep(void) {
     restore_interrupts(irq);
     const record_t *stored=(const record_t *)(XIP_BASE+EXTRA_BASE+next*FLASH_PAGE_SIZE);
     if(stored->magic==EXTRA_MAGIC && stored->crc==checksum(stored)) { newest=next; sequence=record.sequence; dirty=false; }
+}
+
+void eh_date_reset(void) {
+    eh_extra_settings_write(0, defaults, sizeof(defaults));
+}
+void eh_extra_settings_housekeep(void) {
+    if (timer_elapsed32(changed_at) >= 350) eh_extra_settings_flush();
 }

@@ -27,6 +27,7 @@
 
 #define EH_SHORT_PRODUCT_NAME "M4CR0Pad"
 #define EH_HAS_DISPLAY
+#define EH_HOME_HIDE_MODIFIERS
 #define EH_STANDBY_BACKGROUND_ENABLE
 // Use built-in startup artwork; obsolete custom splash flash is ignored.
 #define EH_SEQUENTIAL_LAYER_FALLBACK

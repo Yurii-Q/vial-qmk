@@ -166,6 +166,80 @@ static void flash_program_sector(uint32_t relative_offset, const uint8_t *sector
     }
 }
 
+/* Slot updates retain the v3/v4 package and wire layout. The unused tail of
+ * this reservation holds an undo transaction: one descriptor sector and up
+ * to three old sectors (header plus a record that straddles two sectors).
+ * Backups are verified before publishing the descriptor, and no live sector
+ * is touched before that descriptor is verified. Boot rolls back an armed
+ * transaction; recovery is idempotent even if power fails during recovery.
+ */
+#define SLOT_JOURNAL_OFFSET 0x0001C000u
+#define SLOT_JOURNAL_MAGIC 0x55494845u
+#define SLOT_JOURNAL_SECTORS 3u
+typedef struct {
+    uint32_t magic, count;
+    uint32_t offsets[SLOT_JOURNAL_SECTORS];
+    uint32_t checksums[SLOT_JOURNAL_SECTORS];
+    uint8_t reserved[220];
+    uint32_t checksum;
+} slot_journal_t;
+_Static_assert(sizeof(slot_journal_t) == FLASH_PAGE_SIZE, "slot journal page size");
+_Static_assert(((EH_PICTOGRAM_PACKAGE_SIZE + FLASH_SECTOR_SIZE - 1) / FLASH_SECTOR_SIZE) * FLASH_SECTOR_SIZE <= SLOT_JOURNAL_OFFSET, "slot journal overlaps assets");
+_Static_assert(SLOT_JOURNAL_OFFSET + (1 + SLOT_JOURNAL_SECTORS) * FLASH_SECTOR_SIZE <= EH_PICTOGRAM_FLASH_SIZE, "slot journal exceeds reservation");
+_Static_assert(EH_PICTOGRAM_FLASH_OFFSET + EH_PICTOGRAM_FLASH_SIZE <= PICO_FLASH_SIZE_BYTES, "pictograms exceed chip");
+
+static const uint8_t *flash_data(uint32_t offset) {
+    return (const uint8_t *)(XIP_BASE + EH_PICTOGRAM_FLASH_OFFSET + offset);
+}
+
+static bool slot_journal_armed(const slot_journal_t *journal) {
+    if (journal->magic != SLOT_JOURNAL_MAGIC || journal->count < 1 || journal->count > SLOT_JOURNAL_SECTORS ||
+        journal->checksum != crc32((const uint8_t *)journal, offsetof(slot_journal_t, checksum))) return false;
+    for (uint32_t i = 0; i < journal->count; ++i) {
+        if (journal->offsets[i] % FLASH_SECTOR_SIZE || journal->offsets[i] >= EH_PICTOGRAM_PACKAGE_SIZE) return false;
+    }
+    return true;
+}
+
+static bool slot_journal_recover(void) {
+    const slot_journal_t *journal = (const slot_journal_t *)flash_data(SLOT_JOURNAL_OFFSET);
+    if (!slot_journal_armed(journal)) return true;
+    /* Verify every backup before restoring any sector. */
+    for (uint32_t i = 0; i < journal->count; ++i) {
+        if (crc32(flash_data(SLOT_JOURNAL_OFFSET + (i + 1) * FLASH_SECTOR_SIZE), FLASH_SECTOR_SIZE) != journal->checksums[i]) return false;
+    }
+    for (uint32_t i = 0; i < journal->count; ++i) {
+        memcpy(slot_sector_buffer, flash_data(SLOT_JOURNAL_OFFSET + (i + 1) * FLASH_SECTOR_SIZE), FLASH_SECTOR_SIZE);
+        flash_program_sector(journal->offsets[i], slot_sector_buffer);
+        if (memcmp(flash_data(journal->offsets[i]), slot_sector_buffer, FLASH_SECTOR_SIZE)) return false;
+    }
+    flash_erase(SLOT_JOURNAL_OFFSET);
+    return true;
+}
+
+static bool slot_journal_begin(uint32_t record_offset) {
+    slot_journal_t journal;
+    memset(&journal, 0xFF, sizeof(journal));
+    journal.magic = SLOT_JOURNAL_MAGIC;
+    journal.count = 1;
+    journal.offsets[0] = 0;
+    uint32_t first = record_offset & ~(FLASH_SECTOR_SIZE - 1u);
+    uint32_t last = (record_offset + EH_PICTOGRAM_RECORD_SIZE - 1) & ~(FLASH_SECTOR_SIZE - 1u);
+    if (first) journal.offsets[journal.count++] = first;
+    if (last != first) journal.offsets[journal.count++] = last;
+    flash_erase(SLOT_JOURNAL_OFFSET);
+    for (uint32_t i = 0; i < journal.count; ++i) {
+        memcpy(slot_sector_buffer, flash_data(journal.offsets[i]), FLASH_SECTOR_SIZE);
+        journal.checksums[i] = crc32(slot_sector_buffer, FLASH_SECTOR_SIZE);
+        uint32_t backup = SLOT_JOURNAL_OFFSET + (i + 1) * FLASH_SECTOR_SIZE;
+        flash_program_sector(backup, slot_sector_buffer);
+        if (memcmp(flash_data(backup), slot_sector_buffer, FLASH_SECTOR_SIZE)) return false;
+    }
+    journal.checksum = crc32((const uint8_t *)&journal, offsetof(slot_journal_t, checksum));
+    flash_program(SLOT_JOURNAL_OFFSET, (const uint8_t *)&journal);
+    return memcmp(flash_data(SLOT_JOURNAL_OFFSET), &journal, sizeof(journal)) == 0;
+}
+
 static void set_slot_valid(eh_pictogram_header_t *header, uint8_t kind, uint16_t slot, bool present) {
     uint8_t *valid_bits = kind == 0 ? header->macro_valid : header->tap_dance_valid;
     if (present) {
@@ -193,9 +267,12 @@ static void initialize_empty_storage(void) {
 }
 
 static bool commit_slot_upload(void) {
+    if (!slot_journal_recover()) return false;
+    valid = storage_is_valid();
     if (!valid) initialize_empty_storage();
     uint32_t payload_slot = (slot_upload_kind == 0 ? 0u : EH_PICTOGRAM_MACRO_SLOTS) + slot_upload_slot;
     uint32_t record_offset = EH_PICTOGRAM_HEADER_SIZE + payload_slot * EH_PICTOGRAM_RECORD_SIZE;
+    if (!slot_journal_begin(record_offset)) return false;
     uint32_t record_written = 0;
     while (record_written < EH_PICTOGRAM_RECORD_SIZE) {
         uint32_t offset = record_offset + record_written;
@@ -224,12 +301,22 @@ static bool commit_slot_upload(void) {
     flash_program_sector(0, slot_sector_buffer);
 
     valid = storage_is_valid();
+    if (valid) {
+        /* Commit point: the new package is complete before disarming undo. */
+        flash_erase(SLOT_JOURNAL_OFFSET);
+    } else {
+        slot_journal_recover();
+        valid = storage_is_valid();
+        generation++;
+        return false;
+    }
     generation++;
-    return valid;
+    return true;
 }
 
 void eh_pictograms_init(void) {
-    valid = storage_is_valid();
+    upload_active = slot_upload_active = false;
+    valid = slot_journal_recover() && storage_is_valid();
     generation++;
 }
 
@@ -288,6 +375,7 @@ static void start_upload(uint32_t expected_crc) {
     upload_page_used = 0;
     memset(upload_header, 0xFF, sizeof(upload_header));
     memset(upload_page, 0xFF, sizeof(upload_page));
+    flash_erase(SLOT_JOURNAL_OFFSET);
     flash_erase(0);
 }
 
@@ -415,7 +503,9 @@ bool eh_pictograms_process_hid(uint8_t *data, uint8_t length) {
 
         case EH_PICTOGRAM_CMD_CLEAR:
             upload_active = false;
+            slot_upload_active = false;
             valid = false;
+            flash_erase(SLOT_JOURNAL_OFFSET);
             flash_erase(0);
             generation++;
             break;

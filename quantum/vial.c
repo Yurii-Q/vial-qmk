@@ -36,7 +36,10 @@ int vial_unlocked = 0;
 #endif
 int vial_unlock_in_progress = 0;
 static int vial_unlock_counter = 0;
-static uint16_t vial_unlock_timer;
+#ifndef VIAL_INSECURE
+static uint32_t vial_unlock_timer;
+static bool vial_unlock_holding;
+#endif
 
 #ifndef VIAL_INSECURE
 static uint8_t vial_unlock_combo_rows[] = VIAL_UNLOCK_COMBO_ROWS;
@@ -82,6 +85,30 @@ static void reload_key_override(void);
 #ifdef VIAL_ALT_REPEAT_KEY_ENABLE
 static void reload_alt_repeat_key(void);
 #endif
+
+/* Called after every physical matrix scan, including unchanged scans. */
+void vial_unlock_task(void) {
+#ifndef VIAL_INSECURE
+    if (!vial_unlock_in_progress) return;
+    if (!vial_unlock_combo_active()) {
+        vial_unlock_holding = false;
+        vial_unlock_counter = VIAL_UNLOCK_COUNTER_MAX;
+        return;
+    }
+    if (!vial_unlock_holding) {
+        vial_unlock_holding = true;
+        vial_unlock_timer = timer_read32();
+    }
+    uint32_t elapsed = timer_elapsed32(vial_unlock_timer);
+    if (elapsed >= VIAL_UNLOCK_HOLD_TIME_MS) {
+        vial_unlock_counter = 0;
+        vial_unlock_in_progress = 0;
+        vial_unlocked = 1;
+    } else {
+        vial_unlock_counter = VIAL_UNLOCK_COUNTER_MAX - elapsed / VIAL_UNLOCK_COUNTER_TICK_MS;
+    }
+#endif
+}
 
 void vial_init(void) {
 #ifdef VIAL_TAP_DANCE_ENABLE
@@ -186,40 +213,13 @@ void vial_handle_cmd(uint8_t *msg, uint8_t length) {
         case vial_unlock_start: {
             vial_unlock_in_progress = 1;
             vial_unlock_counter = VIAL_UNLOCK_COUNTER_MAX;
-            vial_unlock_timer = timer_read();
+#ifndef VIAL_INSECURE
+            vial_unlock_holding = false;
+#endif
             break;
         }
         case vial_unlock_poll: {
-#ifndef VIAL_INSECURE
-            if (vial_unlock_in_progress) {
-                bool holding = vial_unlock_combo_active();
-
-                if (holding) {
-                    uint16_t elapsed = timer_elapsed(vial_unlock_timer);
-                    uint16_t ticks = elapsed / VIAL_UNLOCK_COUNTER_TICK_MS;
-
-                    if (ticks > 0) {
-                        /* Keep the sub-tick remainder so the hold duration does not
-                         * depend on the host application's polling cadence. */
-                        vial_unlock_timer += ticks * VIAL_UNLOCK_COUNTER_TICK_MS;
-                        if (ticks >= vial_unlock_counter) {
-                            vial_unlock_counter = 0;
-                        } else {
-                            vial_unlock_counter -= ticks;
-                        }
-                    }
-
-                    if (vial_unlock_counter == 0) {
-                        /* ok unlock succeeded */
-                        vial_unlock_in_progress = 0;
-                        vial_unlocked = 1;
-                    }
-                } else {
-                    vial_unlock_counter = VIAL_UNLOCK_COUNTER_MAX;
-                    vial_unlock_timer = timer_read();
-                }
-            }
-#endif
+            /* Only report state: physical hold time belongs to the matrix task. */
             msg[0] = vial_unlocked;
             msg[1] = vial_unlock_in_progress;
             msg[2] = vial_unlock_counter;
@@ -228,6 +228,8 @@ void vial_handle_cmd(uint8_t *msg, uint8_t length) {
         case vial_lock: {
 #ifndef VIAL_INSECURE
             vial_unlocked = 0;
+            vial_unlock_in_progress = 0;
+            vial_unlock_holding = false;
 #endif
             break;
         }

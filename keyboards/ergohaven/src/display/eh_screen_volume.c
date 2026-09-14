@@ -97,6 +97,7 @@ void screen_volume_load(void) {
     lv_anim_del(arc_volume, set_displayed_volume);
     set_displayed_volume(arc_volume, volume * VOLUME_SCALE);
     lv_scr_load(screen_volume);
+    display_apply_brightness();
 }
 
 void screen_volume_housekeep(void) {

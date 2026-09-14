@@ -89,6 +89,16 @@ static lv_obj_t *label_layout;
 static lv_obj_t *label_hid_media_artist;
 static lv_obj_t *label_hid_media_title;
 static lv_obj_t *screen_home_media;
+#ifndef EH_HOME_HIDE_MODIFIERS
+static lv_obj_t *label_shift;
+static lv_obj_t *label_ctrl;
+static lv_obj_t *label_alt;
+static lv_obj_t *label_gui;
+static lv_obj_t *label_num;
+static lv_obj_t *label_caps;
+static lv_obj_t *label_scroll;
+static lv_obj_t *screen_home_mods;
+#endif
 static lv_obj_t *clock_custom;
 static uint8_t   clock_hours;
 static uint8_t   clock_minutes;
@@ -900,6 +910,23 @@ void screen_home_init(void) {
     lv_obj_set_style_text_align(label_layout, LV_TEXT_ALIGN_RIGHT, 0);
     lv_obj_set_style_text_font(label_layout, &eh_font_montserrat_20, LV_PART_MAIN);
 
+#ifndef EH_HOME_HIDE_MODIFIERS
+    screen_home_mods = lv_obj_create(content);
+    lv_obj_add_style(screen_home_mods, &style_container, 0);
+    use_flex_row(screen_home_mods);
+    lv_obj_set_pos(screen_home_mods, 0, 130);
+    lv_obj_set_size(screen_home_mods, 230, 100);
+
+    label_gui   = create_button(screen_home_mods, "GUI", &style_button, &style_button_active);
+    label_alt   = create_button(screen_home_mods, "ALT", &style_button, &style_button_active);
+    label_ctrl  = create_button(screen_home_mods, "CTL", &style_button, &style_button_active);
+    label_shift = create_button(screen_home_mods, "SFT", &style_button, &style_button_active);
+
+    label_num    = create_button(screen_home_mods, "NUM", &style_button, &style_button_active);
+    label_caps   = create_button(screen_home_mods, "CAPS", &style_button, &style_button_active);
+    label_scroll = create_button(screen_home_mods, "SCRL", &style_button, &style_button_active);
+
+#endif
     screen_home_media = lv_obj_create(content);
     lv_obj_add_style(screen_home_media, &style_container, 0);
     toggle_hidden(screen_home_media, false);
@@ -939,7 +966,45 @@ void screen_home_load(void) {
     display_apply_brightness();
 }
 
+#ifndef EH_HOME_HIDE_MODIFIERS
+static void screen_home_update_modifiers(void) {
+    static led_t previous_leds;
+    static uint8_t previous_mods = 255;
+    static bool previous_mac;
+    static uint32_t mods_timer;
+    led_t leds = host_keyboard_led_state();
+    leds.caps_lock |= split_get_caps_word();
+    uint8_t mods = get_mods() | get_oneshot_mods();
+    if (mods || previous_leds.raw != leds.raw) mods_timer = timer_read32();
+    bool show = !is_hid_active() || timer_elapsed32(mods_timer) < EH_DISPLAY_TIMEOUT_ACTIVITY;
+    toggle_hidden(screen_home_mods, show);
+    toggle_hidden(screen_home_media, !show);
+    bool mac = split_get_mac();
+    if (mac != previous_mac) {
+        lv_label_set_text(label_gui, mac ? "CMD" : "GUI");
+        lv_label_set_text(label_alt, mac ? "OPT" : "ALT");
+        previous_mac = mac;
+    }
+    if (leds.raw != previous_leds.raw) {
+        toggle_state(label_caps, LV_STATE_PRESSED, leds.caps_lock);
+        toggle_state(label_num, LV_STATE_PRESSED, leds.num_lock);
+        toggle_state(label_scroll, LV_STATE_PRESSED, leds.scroll_lock);
+        previous_leds = leds;
+    }
+    if (mods != previous_mods) {
+        toggle_state(label_shift, LV_STATE_PRESSED, mods & MOD_MASK_SHIFT);
+        toggle_state(label_ctrl, LV_STATE_PRESSED, mods & MOD_MASK_CTRL);
+        toggle_state(label_alt, LV_STATE_PRESSED, mods & MOD_MASK_ALT);
+        toggle_state(label_gui, LV_STATE_PRESSED, mods & MOD_MASK_GUI);
+        previous_mods = mods;
+    }
+}
+#endif
+
 void screen_home_housekeep(void) {
+#ifndef EH_HOME_HIDE_MODIFIERS
+    screen_home_update_modifiers();
+#endif
     static uint8_t prev_layer      = 255;
     static uint8_t prev_lang       = -1;
     static bool    prev_hid_active = false;
@@ -976,7 +1041,7 @@ void screen_home_housekeep(void) {
         apply_clock_element_visibility();
 #ifdef EH_DATE_SETTINGS_ENABLE
         toggle_hidden(screen_home_media, hid_active && eh_date_get(11));
-#else
+#elif defined(EH_HOME_HIDE_MODIFIERS)
         toggle_hidden(screen_home_media,hid_active);
 #endif
         prev_hid_active = hid_active;

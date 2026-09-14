@@ -280,6 +280,10 @@ void kb_settings_reset(void) {
     kb_settings_split_pointing_reset();
     kb_settings_led_colors_reset();
     kb_settings_lcd_reset();
+#ifdef EH_DATE_SETTINGS_ENABLE
+    eh_date_reset();
+    eh_extra_settings_flush();
+#endif
     kb_settings_init();
 }
 
