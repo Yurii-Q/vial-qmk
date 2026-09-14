@@ -20,6 +20,14 @@ hid_data_t *get_hid_data(void) {
 }
 
 static uint32_t hid_sync_time = 0;
+static uint32_t time_sync_time, host_status_time;
+static bool time_received, host_status_seen, host_online;
+
+bool is_hid_time_active(void) {
+    if (!time_received) return false;
+    if (host_status_seen) return host_online && timer_elapsed32(host_status_time) < 5000;
+    return timer_elapsed32(time_sync_time) < 61000;
+}
 
 bool is_hid_active(void) {
     return (hid_sync_time != 0) && timer_elapsed32(hid_sync_time) < 61 * 1000;
@@ -32,6 +40,8 @@ typedef enum {
     _MEDIA_ARTIST,
     _MEDIA_TITLE,
     _DATE,
+
+    _HOST_STATUS = 0xBA,
 
     _RELAY_FROM_DEVICE = 0xCC,
     _RELAY_TO_DEVICE,
@@ -48,6 +58,7 @@ void read_string(uint8_t *data, char *string_data) {
 }
 
 bool process_raw_hid_data(uint8_t *data, uint8_t length) {
+    if (length < 3) return false;
     uint8_t data_type = data[0];
 
     bool new_hid_data = false;
@@ -58,10 +69,21 @@ bool process_raw_hid_data(uint8_t *data, uint8_t length) {
             // sentinel. Never expose it (or any malformed packet) as a clock
             // value; the last valid time remains visible until normal timeout.
             if (data[1] < 24 && data[2] < 60) {
+                time_received = true;
+                time_sync_time = timer_read32();
                 hid_data.hours        = data[1];
                 hid_data.minutes      = data[2];
                 hid_data.time_changed = true;
                 new_hid_data          = true;
+            }
+            break;
+
+        case _HOST_STATUS:
+            if (data[1] <= 1) {
+                host_status_seen = true;
+                host_online = data[1] != 0;
+                host_status_time = timer_read32();
+                new_hid_data = true;
             }
             break;
 

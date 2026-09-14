@@ -115,3 +115,6 @@ SRC += keyboards/ergohaven/src/display/fonts/eh_font_clock_montserrat_28.c
 SRC += keyboards/ergohaven/src/display/fonts/eh_font_clock_montserrat_40.c
 
 SRC += keyboards/ergohaven/src/display/fonts/eh_font_clock_montserrat_48.c
+
+# Dedicated asset transport; the legacy Vial interface stays unchanged.
+OPT_DEFS += -DEH_FAST_UPLOAD_ENABLE

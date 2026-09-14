@@ -1,7 +1,7 @@
 MCU = RP2040
 BOARD = GENERIC_RP_RP2040
 BOOTLOADER = rp2040
-OPT_DEFS += -DPICO_FLASH_SIZE_BYTES=4194304
+OPT_DEFS += -DPICO_FLASH_SIZE_BYTES=2097152
 OPT_DEFS += -DEH_PICTOGRAM_ENABLE
 EXTRALDFLAGS += -Wl,--defsym=FLASH_LEN=0x000B0000
 # ALLOW_WARNINGS = yes
@@ -115,3 +115,6 @@ SRC += keyboards/ergohaven/src/display/fonts/eh_font_clock_montserrat_28.c
 SRC += keyboards/ergohaven/src/display/fonts/eh_font_clock_montserrat_40.c
 
 SRC += keyboards/ergohaven/src/display/fonts/eh_font_clock_montserrat_48.c
+
+# Dedicated asset transport; the legacy Vial interface stays unchanged.
+OPT_DEFS += -DEH_FAST_UPLOAD_ENABLE

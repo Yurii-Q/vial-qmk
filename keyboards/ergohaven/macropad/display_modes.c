@@ -25,12 +25,8 @@ uint32_t last_matrix_activity_time(void);
 
 static uint32_t screen_timer             = 0;
 static uint32_t last_user_activity_timer = 0;
-static uint32_t encoder_volume_timer     = 0;
-static bool     encoder_volume_recent    = false;
 static uint32_t handled_matrix_activity  = 0;
-static bool     volume_sync_initialized  = false;
 
-#define ENCODER_VOLUME_SYNC_WINDOW_MS 3000
 
 typedef enum {
     SCREEN_OFF = -1,
@@ -130,8 +126,6 @@ void display_process_encoder_event(uint8_t index, bool clockwise, uint16_t keyco
     screen_volume_process_encoder_event(volume_direction > 0);
     change_screen_state   = SCREEN_VOLUME;
     screen_timer          = timer_read32();
-    encoder_volume_timer  = screen_timer;
-    encoder_volume_recent = true;
     apply_screen_state();
 }
 
@@ -205,52 +199,22 @@ void display_housekeeping_task(void) {
         if (screen_state != SCREEN_OFF) change_screen_state = SCREEN_LAYOUT;
     }
 
-    hid_data_t *hid_data             = get_hid_data();
-    bool        hid_active           = is_hid_active();
-    uint32_t    user_activity_elapsed = timer_elapsed32(last_user_activity_timer);
-    // Host status packets are display data, not user input. In particular,
-    // periodic media/volume updates must not wake a powered-down panel.
-    if (screen_state != SCREEN_OFF && hid_active && hid_data->hid_changed) {
-        if (hid_data->volume_changed) {
-            bool initial_sync = !volume_sync_initialized;
-            volume_sync_initialized = true;
-            if (initial_sync && !encoder_volume_recent && screen_state != SCREEN_VOLUME) {
-                // Entropy sends the current host volume when it connects. It
-                // establishes the baseline but must not replace the startup
-                // or layout screen with a synthetic volume notification.
-                hid_data->volume_changed = false;
-            } else if (screen_state == SCREEN_LAYOUT || change_screen_state == SCREEN_LAYOUT) {
-                volume_return_state   = SCREEN_LAYOUT;
-                change_screen_state   = SCREEN_VOLUME;
-                screen_timer          = timer_read32();
-                encoder_volume_recent = false;
-            } else if (screen_state == SCREEN_VOLUME || change_screen_state == SCREEN_VOLUME) {
-                change_screen_state   = SCREEN_VOLUME;
-                screen_timer          = timer_read32();
-                encoder_volume_recent = false;
-            } else if (encoder_volume_recent && timer_elapsed32(encoder_volume_timer) < ENCODER_VOLUME_SYNC_WINDOW_MS) {
-                hid_data->volume_changed = false;
-                encoder_volume_recent    = false;
-            } else {
-                volume_return_state = SCREEN_HOME;
-                change_screen_state = SCREEN_VOLUME;
-                screen_timer        = timer_read32();
-            }
-        }
-        // Media metadata updates the standby content, but it is not user
-        // input and must never pull the keyboard away from the main layout.
-        // The normal clock delay remains the only automatic LAYOUT -> HOME
-        // transition.
-    }
+    uint32_t user_activity_elapsed = timer_elapsed32(last_user_activity_timer);
+    // Host volume packets synchronize data; they are not encoder input.
+    // Only display_process_encoder_event opens the volume screen. While it
+    // is already visible, its housekeep callback renders the latest host
+    // value without extending the user's notification timeout.
+    if (screen_state != SCREEN_VOLUME) get_hid_data()->volume_changed = false;
 
     if (screen_state == change_screen_state) {
         uint32_t screen_elapsed   = timer_elapsed32(screen_timer);
         uint32_t activity_elapsed = last_input_activity_elapsed();
-        uint32_t clock_delay      = get_clock_delay_ms();
 #ifdef EH_DATE_SETTINGS_ENABLE
-        static const uint32_t date_delays[] = {0,5000,10000,15000,30000,60000,120000,20000};
-        uint32_t date_delay = eh_date_get(0) ? date_delays[MIN(eh_date_get(9),7)] : 0;
-        if (date_delay && (!clock_delay || date_delay < clock_delay)) clock_delay = date_delay;
+        // One standby-entry delay, independent of which elements are enabled.
+        static const uint32_t standby_delays[] = {0,5000,10000,15000,30000,60000,120000,20000};
+        uint32_t clock_delay = standby_delays[MIN(eh_date_get(9),7)];
+#else
+        uint32_t clock_delay = get_clock_delay_ms();
 #endif
         uint32_t display_timeout  = get_lcd_timeout_ms();
         bool     display_expired  = display_timeout > 0 && activity_elapsed > display_timeout && user_activity_elapsed > 500;

@@ -1,4 +1,5 @@
 #include "src/display/eh_display.h"
+#include "src/display/eh_display_bounds.h"
 #include "src/display/eh_keycode_str.h"
 #include "src/display/eh_pictograms.h"
 #include "pictogram_render.h"
@@ -19,13 +20,13 @@ const char *default_layer_label(uint8_t layer) {
 
 uint16_t get_keycode(int layer, int row, int col) {
     uint16_t keycode = dynamic_keymap_get_keycode(layer, row, col);
-    if (keycode == KC_TRANSPARENT) keycode = dynamic_keymap_get_keycode(0, row, col);
+    while (keycode == KC_TRANSPARENT && layer > 0) keycode = dynamic_keymap_get_keycode(--layer, row, col);
     return keycode;
 }
 
 uint16_t get_encoder_keycode(int layer, int encoder, bool clockwise) {
     uint16_t keycode = dynamic_keymap_get_encoder(layer, encoder, clockwise);
-    if (keycode == KC_TRANSPARENT) keycode = dynamic_keymap_get_encoder(0, encoder, clockwise);
+    while (keycode == KC_TRANSPARENT && layer > 0) keycode = dynamic_keymap_get_encoder(--layer, encoder, clockwise);
     return keycode;
 }
 
@@ -45,7 +46,7 @@ static char      label_text[NLABELS][24];
 static lv_obj_t *label_layer_icon;
 static lv_obj_t *label_layer;
 
-#define LAYER_HEADER_WIDTH 204
+#define LAYER_HEADER_WIDTH 194
 #define LAYER_HEADER_HEIGHT 70
 #define LAYER_HEADER_LABEL_Y 20
 #define LAYER_HEADER_LABEL_HEIGHT 38
@@ -297,9 +298,9 @@ static void draw_key_shape_event(lv_event_t *event) {
 
     lv_area_t coords;
     lv_obj_get_coords(cell, &coords);
-    lv_area_t shape = centered_shape_area(&coords, 76, 44);
+    lv_area_t shape = centered_shape_area(&coords, 73, 42);
     if (button_style == BUTTON_STYLE_CIRCLE) {
-        shape = centered_shape_area(&coords, 44, 44);
+        shape = centered_shape_area(&coords, 42, 42);
     }
 
     lv_draw_ctx_t *draw_ctx = lv_event_get_draw_ctx(event);
@@ -458,6 +459,7 @@ void screen_layout_apply_accent_color(void) {
         lv_obj_invalidate(key_cells[index]);
         lv_obj_set_style_text_color(key_labels[index], key_pressed[index] ? display_background_color : accent_color_blue, 0);
         if (key_icons[index] != NULL) {
+            key_icon_colors[index] = accent_color_blue;
             lv_obj_set_style_img_recolor(key_icons[index], key_pressed[index] ? display_background_color : key_icon_colors[index], 0);
         }
     }
@@ -532,10 +534,13 @@ void screen_layout_init(void) {
     eh_pictograms_init();
     screen_layout = lv_obj_create(NULL);
     lv_obj_add_style(screen_layout, &style_screen, 0);
-    use_flex_column(screen_layout);
+    lv_obj_t *content = eh_display_safe_content(screen_layout);
+    lv_obj_set_style_pad_row(content, lv_obj_get_style_pad_row(screen_layout, 0), 0);
+    lv_obj_set_style_pad_column(content, lv_obj_get_style_pad_column(screen_layout, 0), 0);
+    use_flex_column(content);
     lv_obj_set_scrollbar_mode(screen_layout, LV_SCROLLBAR_MODE_OFF);
 
-    lv_obj_t *layer_header = lv_obj_create(screen_layout);
+    lv_obj_t *layer_header = lv_obj_create(content);
     lv_obj_add_style(layer_header, &style_container, 0);
     lv_obj_set_size(layer_header, LAYER_HEADER_WIDTH, LAYER_HEADER_HEIGHT);
     lv_obj_set_scrollbar_mode(layer_header, LV_SCROLLBAR_MODE_OFF);
@@ -552,8 +557,8 @@ void screen_layout_init(void) {
     lv_obj_set_style_text_font(label_layer, &eh_font_montserrat_28, LV_PART_MAIN);
     screen_layout_set_layer_name(layer_name(0));
 
-    lv_obj_t *cont = lv_obj_create(screen_layout);
-    lv_obj_set_size(cont, 232, 250);
+    lv_obj_t *cont = lv_obj_create(content);
+    lv_obj_set_size(cont, 222, 240);
     lv_obj_set_flex_flow(cont, LV_FLEX_FLOW_ROW_WRAP);
     int32_t v = 0;
     lv_obj_set_style_pad_row(cont, v, 0);
@@ -564,14 +569,14 @@ void screen_layout_init(void) {
     for (uint32_t i = 0; i < NLABELS; i++) {
         if (i == 12) {
             lv_obj_t *obj = lv_obj_create(cont);
-            lv_obj_set_size(obj, 231, 5);
+            lv_obj_set_size(obj, 222, 5);
             lv_obj_set_scrollbar_mode(obj, LV_SCROLLBAR_MODE_OFF);
             lv_obj_add_style(obj, &style_screen, 0);
             lv_obj_set_style_border_opa(obj, 0, 0);
         }
         lv_obj_t *obj = lv_obj_create(cont);
         key_cells[i] = obj;
-        lv_obj_set_size(obj, 77, 45);
+        lv_obj_set_size(obj, 74, 43);
         lv_obj_set_scrollbar_mode(obj, LV_SCROLLBAR_MODE_OFF);
         lv_obj_add_style(obj, &style_screen, 0);
         lv_obj_set_style_bg_opa(obj, LV_OPA_TRANSP, 0);

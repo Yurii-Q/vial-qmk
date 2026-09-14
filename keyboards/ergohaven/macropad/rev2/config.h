@@ -1,6 +1,6 @@
 #pragma once
 
-// W25Q32JV: keep the historical EEPROM slot while declaring the full 4 MiB chip.
+// RP2040-Zero has 2 MiB flash; preserve the EEPROM slot at its end.
 #define WEAR_LEVELING_RP2040_FLASH_BASE 0x001FC000u
 
 // Render a complete 240x280 frame before flushing it, then drive the ST7789
@@ -28,7 +28,8 @@
 #define EH_SHORT_PRODUCT_NAME "M4CR0Pad"
 #define EH_HAS_DISPLAY
 #define EH_STANDBY_BACKGROUND_ENABLE
-#define EH_STARTUP_IMAGE_ENABLE
+// Use built-in startup artwork; obsolete custom splash flash is ignored.
+#define EH_SEQUENTIAL_LAYER_FALLBACK
 #define EH_ENCODER_WAKE_INTERRUPTS
 
 #define EH_CLOCK_FONT_CHOICES_ENABLE

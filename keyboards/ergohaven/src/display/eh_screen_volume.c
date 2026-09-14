@@ -8,9 +8,10 @@
 static lv_obj_t *screen_volume;
 static lv_obj_t *arc_volume;
 static lv_obj_t *label_volume_arc;
+static lv_obj_t *volume_text_label;
 
-#define VOLUME_ANIMATION_MS 140
-#define VOLUME_ENCODER_STEP 5
+#define VOLUME_ANIMATION_MS 60
+#define VOLUME_ENCODER_STEP 2
 
 static int16_t  displayed_volume = -1;
 static int16_t  preview_volume   = -1;
@@ -18,6 +19,8 @@ static uint8_t  previous_volume  = UINT8_MAX;
 static uint32_t encoder_timer    = 0;
 
 void screen_volume_apply_accent_color(void) {
+    if (label_volume_arc) lv_obj_set_style_text_color(label_volume_arc, accent_color_blue, LV_PART_MAIN);
+    if (volume_text_label) lv_obj_set_style_text_color(volume_text_label, accent_color_blue, LV_PART_MAIN);
     if (arc_volume == NULL) return;
 
     lv_obj_set_style_arc_color(arc_volume, accent_color_blue, LV_PART_INDICATOR);
@@ -51,6 +54,9 @@ static void animate_volume_to(uint8_t target) {
 
 void screen_volume_process_encoder_event(bool increase) {
     hid_data_t *hid = get_hid_data();
+    // While Entropy is connected, use the OS-reported percentage instead of
+    // inventing a +5 step and then animating backwards when the reply arrives.
+    if (is_hid_active()) return;
     int16_t base = preview_volume;
     if (base < 0 || timer_elapsed32(encoder_timer) > EH_DISPLAY_TIMEOUT_VOLUME_SCREEN) {
         base = hid->volume;
@@ -79,13 +85,14 @@ void screen_volume_init(void) {
     lv_obj_set_style_text_font(label_volume_arc, &lv_font_montserrat_48, LV_PART_MAIN);
     lv_obj_center(label_volume_arc);
 
-    lv_obj_t *volume_text_label = lv_label_create(screen_volume);
+    volume_text_label = lv_label_create(screen_volume);
     lv_label_set_text(volume_text_label, "Volume");
     lv_obj_align(volume_text_label, LV_ALIGN_BOTTOM_MID, 0, -50);
+    screen_volume_apply_accent_color();
 }
 
 void screen_volume_load(void) {
-    if (displayed_volume < 0) {
+    if (displayed_volume < 0 || is_hid_active()) {
         uint8_t volume = get_hid_data()->volume;
         preview_volume = volume;
         set_displayed_volume(arc_volume, volume);

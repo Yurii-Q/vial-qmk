@@ -28,6 +28,10 @@
 #define EH_BACKGROUND_CMD_DATA_STREAM 0xB5
 #define EH_BACKGROUND_CMD_SESSION 0xB6
 #define EH_BACKGROUND_CMD_SPEED 0xB7
+#define EH_BACKGROUND_CMD_BIND 0xB8
+#ifdef EH_FAST_UPLOAD_ENABLE
+static uint8_t fast_cookie[8];
+#endif
 #define EH_BACKGROUND_SESSION_TIMEOUT_MS 60000u
 
 enum {
@@ -55,7 +59,7 @@ typedef struct __attribute__((packed)) {
     uint32_t total_size;
     uint32_t data_crc32;
     uint32_t header_crc32;
-    uint16_t frame_delays_ms[EH_BACKGROUND_MAX_FRAMES];
+    uint16_t frame_delays_ms[EH_BACKGROUND_FORMAT_MAX_FRAMES];
     uint8_t reserved[116];
 } eh_background_header_t;
 
@@ -73,10 +77,16 @@ _Static_assert(EH_BACKGROUND_SPEED_FLASH_OFFSET + FLASH_SECTOR_SIZE <= EH_BACKGR
                "speed storage overlaps settings");
 _Static_assert(EH_BACKGROUND_FLASH_OFFSET + EH_BACKGROUND_SETTINGS_FLASH_OFFSET == WEAR_LEVELING_RP2040_FLASH_BASE,
                "background gap must preserve wear-leveling storage");
-_Static_assert(EH_BACKGROUND_FLASH_OFFSET + EH_BACKGROUND_SECOND_REGION_OFFSET +
-                       (EH_BACKGROUND_MAX_PACKAGE_SIZE - EH_BACKGROUND_LOGICAL_SECOND_OFFSET) <=
-                   PICO_FLASH_SIZE_BYTES,
-               "background area exceeds physical flash");
+// Keep the on-flash/wire header unchanged across 2 MiB and 4 MiB boards.
+_Static_assert(EH_BACKGROUND_MAX_FRAMES <= EH_BACKGROUND_FORMAT_MAX_FRAMES, "frame limit exceeds header");
+#define EH_BACKGROUND_PHYSICAL_END \
+    (EH_BACKGROUND_FLASH_OFFSET + (EH_BACKGROUND_MAX_PACKAGE_SIZE <= EH_BACKGROUND_LOGICAL_SECOND_OFFSET \
+        ? EH_BACKGROUND_MAX_PACKAGE_SIZE \
+        : EH_BACKGROUND_SECOND_REGION_OFFSET + EH_BACKGROUND_MAX_PACKAGE_SIZE - EH_BACKGROUND_LOGICAL_SECOND_OFFSET))
+_Static_assert(EH_BACKGROUND_PHYSICAL_END <= PICO_FLASH_SIZE_BYTES, "background area exceeds physical flash");
+_Static_assert(EH_BACKGROUND_FLASH_OFFSET + EH_BACKGROUND_SPEED_FLASH_OFFSET + FLASH_SECTOR_SIZE <= PICO_FLASH_SIZE_BYTES,
+               "speed storage exceeds physical flash");
+
 
 static const eh_background_header_t *const stored_header = (const eh_background_header_t *)(XIP_BASE + EH_BACKGROUND_FLASH_OFFSET);
 static const eh_background_speed_record_t *const stored_speed =
@@ -85,6 +95,8 @@ static bool valid;
 static uint32_t generation;
 static bool animation_paused;
 static uint32_t animation_paused_at;
+static bool config_read_active;
+static uint32_t config_read_at;
 static uint16_t animation_speed_percent = EH_BACKGROUND_SPEED_DEFAULT_PERCENT;
 
 static bool upload_active;
@@ -294,11 +306,25 @@ uint32_t eh_background_generation(void) {
     return generation;
 }
 
+void eh_background_note_config_read(uint8_t command, uint8_t subcommand) {
+    // Only bulk configuration reads pause the backdrop. Live matrix (02/03)
+    // and unlock-status (FE/05) polling run every20ms in Vial and must never
+    // renew this pause. Host clock/media traffic also leaves it untouched.
+    bool bulk_read = command == 0x04 || command == 0x0E || command == 0x12 ||
+        (command == 0xFE && (subcommand == 0x02 || subcommand == 0x03 ||
+         subcommand == 0x09 || subcommand == 0x0A || subcommand == 0x0D));
+    if (bulk_read) {
+        config_read_active = true;
+        config_read_at = timer_read32();
+    }
+}
+
 bool eh_background_animation_paused(void) {
     if (animation_paused && timer_elapsed32(animation_paused_at) >= EH_BACKGROUND_SESSION_TIMEOUT_MS) {
         animation_paused = false;
     }
-    return animation_paused;
+    if (config_read_active && timer_elapsed32(config_read_at) >= 250u) config_read_active = false;
+    return animation_paused || config_read_active;
 }
 
 static void start_upload(uint32_t total, uint32_t expected_crc) {
@@ -348,7 +374,12 @@ static void consume_upload_bytes(const uint8_t *bytes, uint8_t length) {
 }
 
 bool eh_background_process_hid(uint8_t *data, uint8_t length) {
-    if (length != 32 || data[0] < EH_BACKGROUND_CMD_QUERY || data[0] > EH_BACKGROUND_CMD_SPEED) return false;
+    #ifdef EH_FAST_UPLOAD_ENABLE
+    if (length != 32 && length != 64) return false;
+#else
+    if (length != 32) return false;
+#endif
+    if (data[0] < EH_BACKGROUND_CMD_QUERY || data[0] > EH_BACKGROUND_CMD_BIND) return false;
     uint8_t command = data[0];
     uint8_t status = EH_BACKGROUND_STATUS_OK;
 
@@ -364,8 +395,20 @@ bool eh_background_process_hid(uint8_t *data, uint8_t length) {
             write_u32(data + 9, valid ? stored_header->total_size : 0);
             data[13] = EH_BACKGROUND_MAX_FRAMES;
             write_u16(data + 14, animation_speed_percent);
+            write_u32(data + 16, valid ? stored_header->header_crc32 : 0);
+#ifdef EH_FAST_UPLOAD_ENABLE
+            data[20] = 64;
+#endif
             return true;
 
+#ifdef EH_FAST_UPLOAD_ENABLE
+        case EH_BACKGROUND_CMD_BIND:
+            if (length == 32) memcpy(fast_cookie, data + 2, sizeof(fast_cookie));
+            memset(data, 0, length);
+            data[0] = command;
+            memcpy(data + 2, fast_cookie, sizeof(fast_cookie));
+            return true;
+#endif
         case EH_BACKGROUND_CMD_BEGIN: {
             uint32_t total = read_u32(data + 1);
             uint32_t expected_crc = read_u32(data + 5);
@@ -389,7 +432,7 @@ bool eh_background_process_hid(uint8_t *data, uint8_t length) {
                 break;
             }
             uint32_t remaining = upload_total - upload_received;
-            uint8_t payload = MIN((uint32_t)29, remaining);
+            uint8_t payload = MIN((uint32_t)(length - 3), remaining);
             consume_upload_bytes(data + 3, payload);
             upload_next_sequence++;
             break;
