@@ -1203,4 +1203,3 @@ lv_font_t eh_font_date_ubuntu_sans_20 = {
 
 
 #endif /*#if EH_FONT_DATE_UBUNTU_SANS_20*/
-

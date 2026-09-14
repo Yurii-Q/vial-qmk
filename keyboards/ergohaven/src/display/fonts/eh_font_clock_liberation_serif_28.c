@@ -291,4 +291,3 @@ lv_font_t eh_font_clock_liberation_serif_28 = {
 
 
 #endif /*#if EH_FONT_CLOCK_LIBERATION_SERIF_28*/
-

@@ -12,4 +12,3 @@ void eh_startup_image_init(void);
 bool eh_startup_image_process_hid(uint8_t *data, uint8_t length);
 bool eh_startup_image_is_valid(void);
 const uint8_t *eh_startup_image_data(void);
-

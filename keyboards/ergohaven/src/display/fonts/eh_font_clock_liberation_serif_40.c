@@ -442,4 +442,3 @@ lv_font_t eh_font_clock_liberation_serif_40 = {
 
 
 #endif /*#if EH_FONT_CLOCK_LIBERATION_SERIF_40*/
-

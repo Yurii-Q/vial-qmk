@@ -1180,4 +1180,3 @@ lv_font_t eh_font_date_dejavu_mono_20 = {
 
 
 #endif /*#if EH_FONT_DATE_DEJAVU_MONO_20*/
-

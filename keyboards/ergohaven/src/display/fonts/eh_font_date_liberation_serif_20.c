@@ -1225,4 +1225,3 @@ lv_font_t eh_font_date_liberation_serif_20 = {
 
 
 #endif /*#if EH_FONT_DATE_LIBERATION_SERIF_20*/
-

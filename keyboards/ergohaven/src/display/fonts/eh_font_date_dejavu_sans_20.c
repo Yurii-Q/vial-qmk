@@ -1234,4 +1234,3 @@ lv_font_t eh_font_date_dejavu_sans_20 = {
 
 
 #endif /*#if EH_FONT_DATE_DEJAVU_SANS_20*/
-

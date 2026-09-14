@@ -1228,4 +1228,3 @@ lv_font_t eh_font_date_liberation_sans_20 = {
 
 
 #endif /*#if EH_FONT_DATE_LIBERATION_SANS_20*/
-

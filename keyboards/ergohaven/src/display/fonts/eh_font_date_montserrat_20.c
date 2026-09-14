@@ -1266,4 +1266,3 @@ lv_font_t eh_font_date_montserrat_20 = {
 
 
 #endif /*#if EH_FONT_DATE_MONTSERRAT_20*/
-

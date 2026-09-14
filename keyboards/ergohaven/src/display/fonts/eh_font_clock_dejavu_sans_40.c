@@ -550,4 +550,3 @@ lv_font_t eh_font_clock_dejavu_sans_40 = {
 
 
 #endif /*#if EH_FONT_CLOCK_DEJAVU_SANS_40*/
-

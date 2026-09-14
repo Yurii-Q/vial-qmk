@@ -948,4 +948,3 @@ lv_font_t eh_font_clock_liberation_narrow_64 = {
 
 
 #endif /*#if EH_FONT_CLOCK_LIBERATION_NARROW_64*/
-

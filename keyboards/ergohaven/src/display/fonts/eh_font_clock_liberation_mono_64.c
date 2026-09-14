@@ -1141,4 +1141,3 @@ lv_font_t eh_font_clock_liberation_mono_64 = {
 
 
 #endif /*#if EH_FONT_CLOCK_LIBERATION_MONO_64*/
-

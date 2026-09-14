@@ -619,4 +619,3 @@ lv_font_t eh_font_clock_ubuntu_sans_48 = {
 
 
 #endif /*#if EH_FONT_CLOCK_UBUNTU_SANS_48*/
-

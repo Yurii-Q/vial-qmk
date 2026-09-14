@@ -1276,4 +1276,3 @@ lv_font_t eh_font_clock_montserrat_64 = {
 
 
 #endif /*#if EH_FONT_CLOCK_MONTSERRAT_64*/
-

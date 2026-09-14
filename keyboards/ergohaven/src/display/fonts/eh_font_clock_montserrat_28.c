@@ -342,4 +342,3 @@ lv_font_t eh_font_clock_montserrat_28 = {
 
 
 #endif /*#if EH_FONT_CLOCK_MONTSERRAT_28*/
-

@@ -1124,4 +1124,3 @@ lv_font_t eh_font_clock_ubuntu_mono_64 = {
 
 
 #endif /*#if EH_FONT_CLOCK_UBUNTU_MONO_64*/
-
