@@ -63,6 +63,10 @@ common=r'''
 #include <stdlib.h>
 uint32_t mock_now=100;
 uint8_t mock_flash[4194304];
+/* Silent program failure is independent of power-cut/unwind injection. */
+static uint32_t silent_program_address = UINT32_MAX;
+static unsigned silent_program_after, silent_program_hits;
+static bool silent_program_persistent;
 static unsigned flash_operations, cut_after, cut_mode; static bool cut_live; static jmp_buf power_cut;
 static bool cutting(uint32_t offset) {
     flash_operations++;
@@ -79,6 +83,15 @@ void flash_range_program(uint32_t offset,const uint8_t *data,size_t size){
     assert(offset%256==0 && size%256==0 && offset+size<=PICO_FLASH_SIZE_BYTES);
     bool fail=cutting(offset);
     if(fail && cut_mode==1) longjmp(power_cut,1);
+    if (offset == silent_program_address) {
+        if (silent_program_after) {
+            silent_program_after--;
+        } else {
+            silent_program_hits++;
+            if (!silent_program_persistent) silent_program_address = UINT32_MAX;
+            return;
+        }
+    }
     size_t amount=fail && cut_mode==2?size/2:size;
     for(size_t i=0;i<amount;i++){assert((mock_flash[offset+i]&data[i])==data[i]);mock_flash[offset+i]&=data[i];}
     if(fail) longjmp(power_cut,1);
@@ -221,12 +234,11 @@ unlock = r'''
 #include "quantum.h"
 #include <stdio.h>
 #include <assert.h>
-uint32_t mock_now, vial_unlock_timer;
-int vial_unlock_counter, vial_unlock_in_progress, vial_unlocked;
-bool vial_unlock_holding, holding;
+uint32_t mock_now;
+bool holding;
 bool vial_unlock_combo_active(void) { return holding; }
 enum {vial_unlock_start, vial_unlock_poll, vial_lock};
-'''+defs+'\n'+function('quantum/vial.c','vial_unlock_task')+'\nvoid command(int id) { uint8_t msg[32]={0}; switch(id) { '+src[a:b]+' } (void)msg; }\n'
+'''+defs+'\n'+src[src.index('#ifdef VIAL_INSECURE'):src.index('#ifndef VIAL_INSECURE\nstatic uint8_t vial_unlock_combo_rows')]+'\n'+function('quantum/vial.c','vial_unlock_task')+'\nvoid command(int id) { uint8_t msg[32]={0}; switch(id) { '+src[a:b]+' } (void)msg; }\n'
 out.append(run('unlock',unlock+(ROOT/'tests/ergohaven/unlock.c').read_text()))
 assert '    matrix_scan();\n#ifdef VIAL_ENABLE\n    vial_unlock_task();\n#endif' in (ROOT/'quantum/keyboard.c').read_text()
 assert 'kb_settings_reset();' in function('quantum/qmk_settings.c','qmk_settings_reset')

@@ -35,7 +35,9 @@ int vial_unlocked = 1;
 int vial_unlocked = 0;
 #endif
 int vial_unlock_in_progress = 0;
-static int vial_unlock_counter = 0;
+/* The wire countdown is one byte; it never exceeds 30 ticks. */
+static uint8_t vial_unlock_counter = 0;
+_Static_assert(VIAL_UNLOCK_COUNTER_MAX > 0 && VIAL_UNLOCK_COUNTER_MAX <= UINT8_MAX, "unlock counter range");
 #ifndef VIAL_INSECURE
 static uint32_t vial_unlock_timer;
 static bool vial_unlock_holding;
@@ -100,12 +102,20 @@ void vial_unlock_task(void) {
         vial_unlock_timer = timer_read32();
     }
     uint32_t elapsed = timer_elapsed32(vial_unlock_timer);
-    if (elapsed >= VIAL_UNLOCK_HOLD_TIME_MS) {
-        vial_unlock_counter = 0;
+    /* Recompute the wire countdown from the same physical hold start. Bounded
+     * subtraction avoids a runtime divide and never iterates more than 30
+     * times, even after a long scan gap. The 32-bit timer retains both wrap
+     * protection and fractional ticks; host polling cannot advance the hold.
+     */
+    uint8_t counter = VIAL_UNLOCK_COUNTER_MAX;
+    while (counter && elapsed >= VIAL_UNLOCK_COUNTER_TICK_MS) {
+        elapsed -= VIAL_UNLOCK_COUNTER_TICK_MS;
+        --counter;
+    }
+    vial_unlock_counter = counter;
+    if (!counter) {
         vial_unlock_in_progress = 0;
         vial_unlocked = 1;
-    } else {
-        vial_unlock_counter = VIAL_UNLOCK_COUNTER_MAX - elapsed / VIAL_UNLOCK_COUNTER_TICK_MS;
     }
 #endif
 }

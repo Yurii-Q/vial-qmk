@@ -159,11 +159,13 @@ static void flash_program(uint32_t relative_offset, const uint8_t *page) {
     restore_interrupts(interrupts);
 }
 
-static void flash_program_sector(uint32_t relative_offset, const uint8_t *sector) {
+static bool flash_program_sector(uint32_t relative_offset, const uint8_t *sector) {
     flash_erase(relative_offset);
     for (uint32_t page = 0; page < FLASH_SECTOR_SIZE; page += FLASH_PAGE_SIZE) {
         flash_program(relative_offset + page, sector + page);
     }
+    /* Verify intended bytes, not a CRC computed from possibly failed writes. */
+    return memcmp((const void *)(XIP_BASE + EH_PICTOGRAM_FLASH_OFFSET + relative_offset), sector, FLASH_SECTOR_SIZE) == 0;
 }
 
 /* Slot updates retain the v3/v4 package and wire layout. The unused tail of
@@ -203,15 +205,24 @@ static bool slot_journal_armed(const slot_journal_t *journal) {
 
 static bool slot_journal_recover(void) {
     const slot_journal_t *journal = (const slot_journal_t *)flash_data(SLOT_JOURNAL_OFFSET);
-    if (!slot_journal_armed(journal)) return true;
+    if (!slot_journal_armed(journal)) {
+        /* A torn prepare/disarm is harmless when the live package is valid.
+         * Otherwise only an erased descriptor means no pending transaction;
+         * corrupt evidence must not authorize destructive empty initialization.
+         */
+        const uint8_t *descriptor = (const uint8_t *)journal;
+        for (uint32_t i = 0; i < sizeof(*journal); ++i) {
+            if (descriptor[i] != 0xFF) return storage_is_valid();
+        }
+        return true;
+    }
     /* Verify every backup before restoring any sector. */
     for (uint32_t i = 0; i < journal->count; ++i) {
         if (crc32(flash_data(SLOT_JOURNAL_OFFSET + (i + 1) * FLASH_SECTOR_SIZE), FLASH_SECTOR_SIZE) != journal->checksums[i]) return false;
     }
     for (uint32_t i = 0; i < journal->count; ++i) {
         memcpy(slot_sector_buffer, flash_data(SLOT_JOURNAL_OFFSET + (i + 1) * FLASH_SECTOR_SIZE), FLASH_SECTOR_SIZE);
-        flash_program_sector(journal->offsets[i], slot_sector_buffer);
-        if (memcmp(flash_data(journal->offsets[i]), slot_sector_buffer, FLASH_SECTOR_SIZE)) return false;
+        if (!flash_program_sector(journal->offsets[i], slot_sector_buffer)) return false;
     }
     flash_erase(SLOT_JOURNAL_OFFSET);
     return true;
@@ -232,8 +243,7 @@ static bool slot_journal_begin(uint32_t record_offset) {
         memcpy(slot_sector_buffer, flash_data(journal.offsets[i]), FLASH_SECTOR_SIZE);
         journal.checksums[i] = crc32(slot_sector_buffer, FLASH_SECTOR_SIZE);
         uint32_t backup = SLOT_JOURNAL_OFFSET + (i + 1) * FLASH_SECTOR_SIZE;
-        flash_program_sector(backup, slot_sector_buffer);
-        if (memcmp(flash_data(backup), slot_sector_buffer, FLASH_SECTOR_SIZE)) return false;
+        if (!flash_program_sector(backup, slot_sector_buffer)) return false;
     }
     journal.checksum = crc32((const uint8_t *)&journal, offsetof(slot_journal_t, checksum));
     flash_program(SLOT_JOURNAL_OFFSET, (const uint8_t *)&journal);
@@ -249,7 +259,7 @@ static void set_slot_valid(eh_pictogram_header_t *header, uint8_t kind, uint16_t
     }
 }
 
-static void initialize_empty_storage(void) {
+static bool initialize_empty_storage(void) {
     for (uint32_t offset = 0; offset < EH_PICTOGRAM_PACKAGE_SIZE; offset += FLASH_SECTOR_SIZE) {
         flash_erase(offset);
     }
@@ -263,13 +273,13 @@ static void initialize_empty_storage(void) {
     header->total_size = EH_PICTOGRAM_PACKAGE_SIZE;
     memset(header->macro_valid, 0, sizeof(header->macro_valid));
     memset(header->tap_dance_valid, 0, sizeof(header->tap_dance_valid));
-    flash_program_sector(0, slot_sector_buffer);
+    return flash_program_sector(0, slot_sector_buffer);
 }
 
 static bool commit_slot_upload(void) {
     if (!slot_journal_recover()) return false;
     valid = storage_is_valid();
-    if (!valid) initialize_empty_storage();
+    if (!valid && !initialize_empty_storage()) return false;
     uint32_t payload_slot = (slot_upload_kind == 0 ? 0u : EH_PICTOGRAM_MACRO_SLOTS) + slot_upload_slot;
     uint32_t record_offset = EH_PICTOGRAM_HEADER_SIZE + payload_slot * EH_PICTOGRAM_RECORD_SIZE;
     if (!slot_journal_begin(record_offset)) return false;
@@ -288,7 +298,7 @@ static bool commit_slot_upload(void) {
         if (sector_offset == 0) {
             set_slot_valid((eh_pictogram_header_t *)slot_sector_buffer, slot_upload_kind, slot_upload_slot, slot_upload_present);
         }
-        flash_program_sector(sector_offset, slot_sector_buffer);
+        if (!flash_program_sector(sector_offset, slot_sector_buffer)) goto rollback;
         record_written += amount;
     }
 
@@ -298,20 +308,25 @@ static bool commit_slot_upload(void) {
     header->data_crc32 = crc32(stored_payload, EH_PICTOGRAM_PAYLOAD_SIZE);
     header->header_crc32 = 0;
     header->header_crc32 = header_crc(slot_sector_buffer);
-    flash_program_sector(0, slot_sector_buffer);
+    if (!flash_program_sector(0, slot_sector_buffer)) goto rollback;
 
     valid = storage_is_valid();
     if (valid) {
         /* Commit point: the new package is complete before disarming undo. */
         flash_erase(SLOT_JOURNAL_OFFSET);
     } else {
-        slot_journal_recover();
-        valid = storage_is_valid();
-        generation++;
-        return false;
+        goto rollback;
     }
     generation++;
     return true;
+
+rollback:
+    /* Report the failed request even if undo succeeds. Failed recovery keeps
+     * the descriptor/backups armed for another attempt, never disarms them.
+     */
+    valid = slot_journal_recover() && storage_is_valid();
+    generation++;
+    return false;
 }
 
 void eh_pictograms_init(void) {

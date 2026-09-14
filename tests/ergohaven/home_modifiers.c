@@ -9,7 +9,8 @@ typedef struct { bool visible,pressed; const char *text; } lv_obj_t;
 #define MOD_MASK_CTRL 0x11
 #define MOD_MASK_ALT 0x44
 #define MOD_MASK_GUI 0x88
-#define EH_DISPLAY_TIMEOUT_ACTIVITY 3000
+#include "../head/keyboards/ergohaven/src/display/eh_display.h"
+_Static_assert(EH_DISPLAY_TIMEOUT_ACTIVITY == 10000, "production home activity timeout");
 static lv_obj_t objects[9];
 static lv_obj_t *label_shift=&objects[0], *label_ctrl=&objects[1], *label_alt=&objects[2], *label_gui=&objects[3];
 static lv_obj_t *label_num=&objects[4], *label_caps=&objects[5], *label_scroll=&objects[6];
@@ -40,10 +41,10 @@ int main(void) {
     oneshot=0; caps_word=false; mac=false; screen_home_update_modifiers();
     for(unsigned i=0;i<7;i++) assert(!objects[i].pressed);
     assert(!strcmp(label_gui->text,"GUI") && !strcmp(label_alt->text,"ALT"));
-    hid=true; mock_now+=3000; screen_home_update_modifiers(); assert(!screen_home_mods->visible && screen_home_media->visible);
+    hid=true; mock_now+=EH_DISPLAY_TIMEOUT_ACTIVITY; screen_home_update_modifiers(); assert(!screen_home_mods->visible && screen_home_media->visible);
     modifiers=MOD_MASK_CTRL; screen_home_update_modifiers(); assert(screen_home_mods->visible && !screen_home_media->visible);
-    modifiers=0; screen_home_update_modifiers(); mock_now+=2999; screen_home_update_modifiers(); assert(screen_home_mods->visible);
+    modifiers=0; screen_home_update_modifiers(); mock_now+=EH_DISPLAY_TIMEOUT_ACTIVITY-1; screen_home_update_modifiers(); assert(screen_home_mods->visible);
     mock_now++; screen_home_update_modifiers(); assert(!screen_home_mods->visible && screen_home_media->visible);
     hid=false; screen_home_update_modifiers(); assert(screen_home_mods->visible && !screen_home_media->visible);
-    puts("shared home: all seven indicators, oneshot/caps-word, Mac labels, media timeout/offline and unchanged-state redraw suppression: PASS");
+    puts("shared home: all seven indicators, oneshot/caps-word, Mac labels, production 10000ms media timeout/offline and unchanged-state redraw suppression: PASS");
 }
