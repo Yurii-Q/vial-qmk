@@ -26,6 +26,7 @@ hid_data_t* get_hid_data(void);
 void keyboard_post_init_hid(void);
 
 bool is_hid_active(void);
+bool is_hid_volume_active(void);
 bool is_hid_time_active(void);
 
 void hid_send_pointing_mode(pointing_mode_t mode);

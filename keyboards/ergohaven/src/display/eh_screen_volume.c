@@ -10,13 +10,14 @@ static lv_obj_t *arc_volume;
 static lv_obj_t *label_volume_arc;
 static lv_obj_t *volume_text_label;
 
-#define VOLUME_ANIMATION_MS 60
-#define VOLUME_ENCODER_STEP 2
+// Overlap frequent host updates without stopping between each sample.
+// Keep fractional percentages so a small encoder step has intermediate angles.
+#define VOLUME_ANIMATION_MS 100
+#define VOLUME_SCALE 100
 
 static int16_t  displayed_volume = -1;
-static int16_t  preview_volume   = -1;
+static int16_t  displayed_label  = -1;
 static uint8_t  previous_volume  = UINT8_MAX;
-static uint32_t encoder_timer    = 0;
 
 void screen_volume_apply_accent_color(void) {
     if (label_volume_arc) lv_obj_set_style_text_color(label_volume_arc, accent_color_blue, LV_PART_MAIN);
@@ -30,15 +31,31 @@ void screen_volume_apply_accent_color(void) {
 static void set_displayed_volume(void *obj, int32_t value) {
     displayed_volume = value;
     lv_arc_set_value(obj, value);
-    lv_label_set_text_fmt(label_volume_arc, "%02ld", value);
+    int16_t percent = (value + VOLUME_SCALE / 2) / VOLUME_SCALE;
+    if (percent != displayed_label) {
+        displayed_label = percent;
+        lv_label_set_text_fmt(label_volume_arc, "%02d", (int)percent);
+    }
 }
 
 static void animate_volume_to(uint8_t target) {
-    int32_t start = displayed_volume < 0 ? target : displayed_volume;
-    lv_anim_del(arc_volume, set_displayed_volume);
+    int32_t end = MIN(target, 100) * VOLUME_SCALE;
+    int32_t start = displayed_volume < 0 ? end : displayed_volume;
 
-    if (start == target) {
-        set_displayed_volume(arc_volume, target);
+    if (start == end) {
+        lv_anim_del(arc_volume, set_displayed_volume);
+        set_displayed_volume(arc_volume, end);
+        return;
+    }
+
+    // Retarget the running animation without deleting/recreating it. When it
+    // is the last animation, recreation resets LVGL's elapsed-time baseline;
+    // frequent host packets can then discard time and make the arc lag behind.
+    lv_anim_t *running = lv_anim_get(arc_volume, set_displayed_volume);
+    if (running) {
+        lv_anim_set_values(running, start, end);
+        running->current_value = start;
+        running->act_time = 0;
         return;
     }
 
@@ -47,27 +64,9 @@ static void animate_volume_to(uint8_t target) {
     lv_anim_set_var(&animation, arc_volume);
     lv_anim_set_exec_cb(&animation, set_displayed_volume);
     lv_anim_set_time(&animation, VOLUME_ANIMATION_MS);
-    lv_anim_set_path_cb(&animation, lv_anim_path_ease_out);
-    lv_anim_set_values(&animation, start, target);
+    lv_anim_set_path_cb(&animation, lv_anim_path_linear);
+    lv_anim_set_values(&animation, start, end);
     lv_anim_start(&animation);
-}
-
-void screen_volume_process_encoder_event(bool increase) {
-    hid_data_t *hid = get_hid_data();
-    // While Entropy is connected, use the OS-reported percentage instead of
-    // inventing a +5 step and then animating backwards when the reply arrives.
-    if (is_hid_active()) return;
-    int16_t base = preview_volume;
-    if (base < 0 || timer_elapsed32(encoder_timer) > EH_DISPLAY_TIMEOUT_VOLUME_SCREEN) {
-        base = hid->volume;
-    }
-
-    int16_t target = base + (increase ? VOLUME_ENCODER_STEP : -VOLUME_ENCODER_STEP);
-    target = MAX(0, MIN(100, target));
-    previous_volume = hid->volume;
-    preview_volume  = target;
-    encoder_timer   = timer_read32();
-    animate_volume_to(target);
 }
 
 void screen_volume_init(void) {
@@ -76,7 +75,7 @@ void screen_volume_init(void) {
 
     arc_volume = lv_arc_create(screen_volume);
     lv_obj_set_size(arc_volume, 200, 200);
-    lv_arc_set_range(arc_volume, 0, 100);
+    lv_arc_set_range(arc_volume, 0, 100 * VOLUME_SCALE);
     lv_obj_center(arc_volume);
     screen_volume_apply_accent_color();
 
@@ -92,19 +91,19 @@ void screen_volume_init(void) {
 }
 
 void screen_volume_load(void) {
-    if (displayed_volume < 0 || is_hid_active()) {
-        uint8_t volume = get_hid_data()->volume;
-        preview_volume = volume;
-        set_displayed_volume(arc_volume, volume);
-    }
+    if (!is_hid_volume_active()) return;
+    uint8_t volume = MIN(get_hid_data()->volume, 100);
+    previous_volume = get_hid_data()->volume;
+    lv_anim_del(arc_volume, set_displayed_volume);
+    set_displayed_volume(arc_volume, volume * VOLUME_SCALE);
     lv_scr_load(screen_volume);
 }
 
 void screen_volume_housekeep(void) {
     hid_data_t *hid = get_hid_data();
-    if (hid->volume != previous_volume) {
+    // Only animate authoritative host values, never a local estimate.
+    if (is_hid_volume_active() && (hid->volume_changed || hid->volume != previous_volume)) {
         previous_volume = hid->volume;
-        preview_volume  = hid->volume;
         animate_volume_to(hid->volume);
     }
     hid->volume_changed = false;

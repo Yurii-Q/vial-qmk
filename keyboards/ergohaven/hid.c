@@ -22,6 +22,8 @@ hid_data_t *get_hid_data(void) {
 static uint32_t hid_sync_time = 0;
 static uint32_t time_sync_time, host_status_time;
 static bool time_received, host_status_seen, host_online;
+static bool volume_received;
+static uint32_t volume_sync_time;
 
 bool is_hid_time_active(void) {
     if (!time_received) return false;
@@ -31,6 +33,14 @@ bool is_hid_time_active(void) {
 
 bool is_hid_active(void) {
     return (hid_sync_time != 0) && timer_elapsed32(hid_sync_time) < 61 * 1000;
+}
+
+bool is_hid_volume_active(void) {
+    if (!volume_received) return false;
+    // Modern Entropy reports shutdown explicitly and sends a heartbeat. Other
+    // traffic (clock/layout/media) must not keep an absent volume host alive.
+    if (host_status_seen) return host_online && timer_elapsed32(host_status_time) < 5000;
+    return timer_elapsed32(volume_sync_time) < 61000;
 }
 
 typedef enum {
@@ -82,6 +92,7 @@ bool process_raw_hid_data(uint8_t *data, uint8_t length) {
             if (data[1] <= 1) {
                 host_status_seen = true;
                 host_online = data[1] != 0;
+                if (!host_online) volume_received = false;
                 host_status_time = timer_read32();
                 new_hid_data = true;
             }
@@ -100,6 +111,8 @@ bool process_raw_hid_data(uint8_t *data, uint8_t length) {
             break;
         }
         case _VOLUME:
+            volume_received        = true;
+            volume_sync_time       = timer_read32();
             hid_data.volume         = data[1];
             hid_data.volume_changed = true;
             new_hid_data            = true;

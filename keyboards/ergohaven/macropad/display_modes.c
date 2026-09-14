@@ -17,7 +17,6 @@ void screen_layout_apply_accent_color(void);
 void screen_layout_apply_background_color(void);
 void screen_layout_apply_button_style(uint8_t style);
 bool screen_layout_has_active_key_animation(void);
-void screen_volume_process_encoder_event(bool increase);
 void screen_volume_apply_accent_color(void);
 void screen_home_apply_clock_settings(void);
 void last_matrix_activity_trigger(void);
@@ -118,12 +117,13 @@ void display_process_encoder_event(uint8_t index, bool clockwise, uint16_t keyco
     // Encoder movement is user input, but it does not change the current
     // display mode. Volume keycodes temporarily open the volume screen and
     // then return to the screen from which the encoder was turned.
-    if (volume_direction == 0) return;
+    // Without a synchronized host value, keep the current screen. This only
+    // controls the overlay; the encoder's USB volume action is unchanged.
+    if (volume_direction == 0 || !is_hid_volume_active()) return;
     if (screen_state != SCREEN_VOLUME) {
         volume_return_state = screen_state == SCREEN_SPLASH ? SCREEN_LAYOUT : screen_state;
     }
 
-    screen_volume_process_encoder_event(volume_direction > 0);
     change_screen_state   = SCREEN_VOLUME;
     screen_timer          = timer_read32();
     apply_screen_state();
@@ -241,7 +241,7 @@ void display_housekeeping_task(void) {
                 break;
 
             case SCREEN_VOLUME:
-                if (screen_elapsed > EH_DISPLAY_TIMEOUT_VOLUME_SCREEN) {
+                if (!is_hid_volume_active() || screen_elapsed > EH_DISPLAY_TIMEOUT_VOLUME_SCREEN) {
                     change_screen_state = volume_return_state;
                 }
                 break;
