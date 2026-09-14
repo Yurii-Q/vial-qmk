@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Native firmware regressions using real source and mocked flash/timers/LVGL.
-Usage: python3 tests/ergohaven/run_native.py /absolute/scratch-output
+Usage: python3 tests/ergohaven/run_native.py /absolute/scratch-output [--only-unlock]
 """
 from pathlib import Path
 import subprocess, re, sys
 ROOT=Path(__file__).resolve().parents[2]
+ONLY_UNLOCK='--only-unlock' in sys.argv[2:]
 P=Path(sys.argv[1]).resolve(); S=P/'stubs'; S.mkdir(parents=True,exist_ok=True)
 def write(path,s):
  p=S/path;p.parent.mkdir(parents=True,exist_ok=True);p.write_text(s)
@@ -98,6 +99,8 @@ void flash_range_program(uint32_t offset,const uint8_t *data,size_t size){
 }
 '''
 def run(name,text,defs=()):
+ if ONLY_UNLOCK and name not in {'unlock','unlock_insecure','unlock_reset_flags'}:
+  return ''
  text=text.replace('../head/',str(ROOT)+'/')
  path=P/(name+'.c'); path.write_text(text)
  cmd=['gcc','-std=c11','-O1','-g','-Wall','-Wextra','-Werror','-fsanitize=undefined','-fno-sanitize-recover=all','-I'+str(S),*defs,str(path),'-o',str(P/name)]
@@ -238,12 +241,37 @@ uint32_t mock_now;
 bool holding;
 bool vial_unlock_combo_active(void) { return holding; }
 enum {vial_unlock_start, vial_unlock_poll, vial_lock};
-'''+defs+'\n'+src[src.index('#ifdef VIAL_INSECURE'):src.index('#ifndef VIAL_INSECURE\nstatic uint8_t vial_unlock_combo_rows')]+'\n'+function('quantum/vial.c','vial_unlock_task')+'\nvoid command(int id) { uint8_t msg[32]={0}; switch(id) { '+src[a:b]+' } (void)msg; }\n'
+'''+defs+'\n'+'\n'.join(re.findall(r'^extern bool vial_unlock(?:ed|_in_progress);$',(ROOT/'quantum/vial.h').read_text(),re.M))+'\n'+src[src.index('#ifdef VIAL_INSECURE'):src.index('#ifndef VIAL_INSECURE\nstatic uint8_t vial_unlock_combo_rows')]+'\n'+function('quantum/vial.c','vial_unlock_task')+'\nvoid command(int id) { uint8_t msg[32]={0}; switch(id) { '+src[a:b]+' } (void)msg; }\n'
+# Compile real public declarations with their real definitions; assert byte flags.
+assert len(re.findall(r'^extern bool vial_unlock(?:ed|_in_progress);$',(ROOT/'quantum/vial.h').read_text(),re.M))==2
+unlock+='\n_Static_assert(sizeof(vial_unlocked)==sizeof(bool) && sizeof(vial_unlock_in_progress)==sizeof(bool), "shared unlock flag types");\n'
 out.append(run('unlock',unlock+(ROOT/'tests/ergohaven/unlock.c').read_text()))
 assert '    matrix_scan();\n#ifdef VIAL_ENABLE\n    vial_unlock_task();\n#endif' in (ROOT/'quantum/keyboard.c').read_text()
 assert 'kb_settings_reset();' in function('quantum/qmk_settings.c','qmk_settings_reset')
 assert 'kb_settings_reset();' in function('keyboards/ergohaven/src/eh_settings.c','eeconfig_init_kb')
 out.append(run('unlock_insecure',unlock+'int main(void) { vial_unlocked=1; command(vial_unlock_start); vial_unlock_task(); command(vial_lock); assert(vial_unlocked); puts("unlock insecure build unchanged: PASS"); }',['-DVIAL_INSECURE']))
+reset_flags=unlock+r"""
+#define VIAL_ENABLE
+#define DYNAMIC_KEYMAP_LAYER_COUNT 2
+#define MATRIX_ROWS 2
+#define MATRIX_COLS 2
+static unsigned writes,erases;
+void nvm_dynamic_keymap_erase(void) { assert(vial_unlocked); erases++; }
+uint16_t keycode_at_keymap_location_raw(int layer,int row,int column) { return layer*4+row*2+column; }
+void dynamic_keymap_set_keycode(int layer,int row,int column,uint16_t keycode) {
+    assert(vial_unlocked && keycode==layer*4+row*2+column); writes++;
+}
+"""+function('quantum/dynamic_keymap.c','dynamic_keymap_reset')+r"""
+int main(void) {
+    for(unsigned unlocked=0;unlocked<2;unlocked++) for(unsigned active=0;active<2;active++) {
+        vial_unlocked=unlocked; vial_unlock_in_progress=active;
+        writes=erases=0; dynamic_keymap_reset();
+        assert(vial_unlocked==unlocked && vial_unlock_in_progress==active && writes==8 && erases==1);
+    }
+    puts("unlock flags: actual public bool declarations/definitions; reset temporarily unlocks and restores both initial states without changing progress: PASS");
+}
+"""
+out.append(run('unlock_reset_flags',reset_flags))
 home_path='keyboards/ergohaven/src/display/eh_screen_home.c'
 home=(ROOT/'tests/ergohaven/home_modifiers.c').read_text().replace('FUNCTION',function(home_path,'screen_home_update_modifiers'))
 out.append(run('home_modifiers',home))

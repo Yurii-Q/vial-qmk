@@ -6,6 +6,8 @@ ARM toolchain, hardware or submodules required):
 ```sh
 python3 tests/ergohaven/run_native.py /absolute/path/to/scratch-output
 python3 util/ci_vial_verify_uid.py
+# Only the secure/insecure sampler and shared flag/reset regression:
+python3 tests/ergohaven/run_native.py /absolute/path/to/scratch-output --only-unlock
 ```
 
 All generated C, mock headers, executables and `results.txt` go to the explicit
@@ -27,7 +29,9 @@ Coverage:
   tests extract the production state declarations as well as the complete task
   and command bodies. They also compare 20000 irregular physical samples against
   the original absolute-hold formula and cover 39 cadence/wrap/long-gap sequences,
-  including delays exceeding 16-bit range and a 32-bit half-range gap
+  including delays exceeding 16-bit range and a 32-bit half-range gap. Public
+  boolean flag declarations are compiled with the production definitions; the
+  real dynamic-keymap reset body is tested for temporary unlock and restoration
 - All seven shared-home indicators, oneshot mods, caps-word, Mac label selection,
   media/activity visibility at the actual 10000ms production timeout (included
   from `eh_display.h`) and no redundant unchanged-state redraws; macropad

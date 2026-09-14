@@ -30,11 +30,11 @@
 
 #ifdef VIAL_INSECURE
 #pragma message "Building Vial-enabled firmware in insecure mode."
-int vial_unlocked = 1;
+bool vial_unlocked = 1;
 #else
-int vial_unlocked = 0;
+bool vial_unlocked = 0;
 #endif
-int vial_unlock_in_progress = 0;
+bool vial_unlock_in_progress = 0;
 /* The wire countdown is one byte; it never exceeds 30 ticks. */
 static uint8_t vial_unlock_counter = 0;
 _Static_assert(VIAL_UNLOCK_COUNTER_MAX > 0 && VIAL_UNLOCK_COUNTER_MAX <= UINT8_MAX, "unlock counter range");
