@@ -314,7 +314,6 @@ bool hid_app_layout_process_packet(uint8_t *data, uint8_t length) {
             }
             bool layout_changed = app_layout_active != app_layout_staging.active ||
                                   memcmp(app_layout_keycodes, app_layout_staging.keycodes, sizeof(app_layout_keycodes)) != 0 ||
-                                  memcmp(app_layout_visuals, app_layout_staging.visuals, sizeof(app_layout_visuals)) != 0 ||
                                   memcmp(app_layout_stack_counts, app_layout_staging.stack_counts, sizeof(app_layout_stack_counts)) != 0 ||
                                   memcmp(app_layout_stack_keycodes, app_layout_staging.stack_keycodes, sizeof(app_layout_stack_keycodes)) != 0 ||
                                   memcmp(app_layout_stack_names, app_layout_staging.stack_names, sizeof(app_layout_stack_names)) != 0 ||

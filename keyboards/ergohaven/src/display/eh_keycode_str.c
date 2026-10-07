@@ -369,39 +369,39 @@ bool special_keycode_str(char *buf, uint16_t keycode) {
             sprintf(buf, EH_SYMBOL_KEYBOARD "\nClr");
             return true;
         case QK_LAYER_LOCK:
-            sprintf(buf, EH_SYMBOL_LAYER "\nLock");
+            sprintf(buf, EH_SYMBOL_LAYER " Lock");
             return true;
         case QK_TRI_LAYER_LOWER:
-            sprintf(buf, EH_SYMBOL_LAYER "Tr\nLow");
+            sprintf(buf, EH_SYMBOL_LAYER " Low");
             return true;
         case QK_TRI_LAYER_UPPER:
-            sprintf(buf, EH_SYMBOL_LAYER "Tr\nUp");
+            sprintf(buf, EH_SYMBOL_LAYER " Up");
             return true;
         case QK_TO ... QK_TO_MAX:
-            sprintf(buf, "TO\n" EH_SYMBOL_LAYER "%d", keycode - QK_TO);
+            sprintf(buf, "TO " EH_SYMBOL_LAYER "%d", keycode - QK_TO);
             return true;
         case QK_MOMENTARY ... QK_MOMENTARY_MAX:
             sprintf(buf, EH_SYMBOL_LAYER "%d", keycode - QK_MOMENTARY);
             return true;
         case QK_PERSISTENT_DEF_LAYER ... QK_PERSISTENT_DEF_LAYER_MAX:
-            sprintf(buf, "PDF\n" EH_SYMBOL_LAYER "%d", keycode - QK_PERSISTENT_DEF_LAYER);
+            sprintf(buf, "PDF " EH_SYMBOL_LAYER "%d", keycode - QK_PERSISTENT_DEF_LAYER);
             return true;
         case QK_DEF_LAYER ... QK_DEF_LAYER_MAX:
-            sprintf(buf, "DF\n" EH_SYMBOL_LAYER "%d", keycode - QK_DEF_LAYER);
+            sprintf(buf, "DF " EH_SYMBOL_LAYER "%d", keycode - QK_DEF_LAYER);
             return true;
         case QK_TOGGLE_LAYER ... QK_TOGGLE_LAYER_MAX:
-            sprintf(buf, "TG\n" EH_SYMBOL_LAYER "%d", keycode - QK_TOGGLE_LAYER);
+            sprintf(buf, "TG " EH_SYMBOL_LAYER "%d", keycode - QK_TOGGLE_LAYER);
             return true;
         case QK_LAYER_TAP_TOGGLE ... QK_LAYER_TAP_TOGGLE_MAX:
-            sprintf(buf, "TT\n" EH_SYMBOL_LAYER "%d", keycode - QK_LAYER_TAP_TOGGLE);
+            sprintf(buf, "TT " EH_SYMBOL_LAYER "%d", keycode - QK_LAYER_TAP_TOGGLE);
             return true;
         case QK_ONE_SHOT_LAYER ... QK_ONE_SHOT_LAYER_MAX:
-            sprintf(buf, "OSL\n" EH_SYMBOL_LAYER "%d", keycode - QK_ONE_SHOT_LAYER);
+            sprintf(buf, "OSL " EH_SYMBOL_LAYER "%d", keycode - QK_ONE_SHOT_LAYER);
             return true;
         case QK_LAYER_TAP ... QK_LAYER_TAP_MAX: {
             int layer = QK_LAYER_TAP_GET_LAYER(keycode);
             int kc    = QK_LAYER_TAP_GET_TAP_KEYCODE(keycode);
-            sprintf(buf, EH_SYMBOL_LAYER "%d\n%s", layer, basic_keycode_to_str(kc));
+            sprintf(buf, EH_SYMBOL_LAYER "%d/%s", layer, basic_keycode_to_str(kc));
             return true;
         }
 

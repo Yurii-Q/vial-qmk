@@ -3,6 +3,9 @@
 #include "src/display/eh_keycode_str.h"
 #include "src/display/eh_pictograms.h"
 #include "pictogram_render.h"
+#include "layer_navigation_icons.h"
+#include "action_icons.h"
+#include "builtin_key_icons.h"
 #include "src/display/eh_symbols.h"
 #include "src/display/lvgl_helpers.h"
 #include "ergohaven.h"
@@ -664,9 +667,12 @@ static void integration_icon_line(uint8_t *bits, int16_t x0, int16_t y0, int16_t
     int16_t dy = -(y1 >= y0 ? y1 - y0 : y0 - y1);
     int16_t sy = y0 < y1 ? 1 : -1;
     int16_t error = dx + dy;
+    // Width 2 used to rasterize as a three-pixel square brush.
+    int8_t low = width == 2 ? -1 : -(int8_t)(width / 2);
+    int8_t high = width == 2 ? 0 : (int8_t)(width / 2);
     while (true) {
-        for (int8_t oy = -(int8_t)(width / 2); oy <= (int8_t)(width / 2); oy++) {
-            for (int8_t ox = -(int8_t)(width / 2); ox <= (int8_t)(width / 2); ox++) {
+        for (int8_t oy = low; oy <= high; oy++) {
+            for (int8_t ox = low; ox <= high; ox++) {
                 integration_icon_pixel(bits, x0 + ox, y0 + oy);
             }
         }
@@ -736,6 +742,10 @@ static void integration_icon_circle(uint8_t *bits, int16_t center_x, int16_t cen
 }
 
 static void integration_icon_base(uint8_t *bits, uint8_t visual) {
+    if (visual >= EH_ACTION_ICON_FIRST_VISUAL && visual < EH_ACTION_ICON_FIRST_VISUAL + EH_ACTION_ICON_COUNT) {
+        eh_render_pictogram(eh_action_icons[visual - EH_ACTION_ICON_FIRST_VISUAL], 35, bits);
+        return;
+    }
     if (visual == 1) {
         integration_icon_rect(bits, 6, 8, 28, 27);
         integration_icon_line(bits, 11, 13, 23, 13, 1);
@@ -862,6 +872,54 @@ static void screen_layout_set_integration_icon(uint8_t index, uint8_t visual, ui
     lv_obj_clear_flag(key_icons[index], LV_OBJ_FLAG_HIDDEN);
 }
 
+// Built-in QMK layers and encoder actions use the same native 35x35 canvas
+// as Entropy's preset artwork. Uploaded user pictograms take precedence.
+static const uint8_t *screen_layout_builtin_key_icon(uint16_t keycode) {
+    enum eh_builtin_key_icon icon;
+    switch (keycode) {
+        case C(KC_X): return EH_SHARED_ICON_CUT;
+        case C(KC_C): return EH_SHARED_ICON_COPY;
+        case C(KC_V): return EH_SHARED_ICON_PASTE;
+        case KC_BRIGHTNESS_DOWN: icon = EH_KEY_ICON_BRIGHTNESS_DOWN; break;
+        case KC_BRIGHTNESS_UP: icon = EH_KEY_ICON_BRIGHTNESS_UP; break;
+        case KC_CONTROL_PANEL: icon = EH_KEY_ICON_CONTROL_PANEL; break;
+        case KC_MY_COMPUTER: icon = EH_KEY_ICON_COMPUTER; break;
+        case KC_WWW_SEARCH: icon = EH_KEY_ICON_WEB_SEARCH; break;
+        case KC_MAIL: icon = EH_KEY_ICON_MAIL; break;
+        case KC_MEDIA_PREV_TRACK: return EH_SHARED_ICON_PREVIOUS_TRACK;
+        case KC_MEDIA_PLAY_PAUSE: return EH_SHARED_ICON_PLAY_PAUSE;
+        case KC_MEDIA_NEXT_TRACK: return EH_SHARED_ICON_NEXT_TRACK;
+        case KC_CALCULATOR: icon = EH_KEY_ICON_CALCULATOR; break;
+        case KC_AUDIO_MUTE: return EH_SHARED_ICON_MUTE;
+        case KC_AUDIO_VOL_DOWN: icon = EH_KEY_ICON_VOLUME_DOWN; break;
+        case KC_AUDIO_VOL_UP: return EH_SHARED_ICON_VOLUME_UP;
+        case KC_HOME: icon = EH_KEY_ICON_HOME; break;
+        case KC_INSERT: icon = EH_KEY_ICON_INSERT; break;
+        case KC_END: icon = EH_KEY_ICON_END; break;
+        case KC_DELETE: icon = EH_KEY_ICON_DELETE; break;
+        case KC_PRINT_SCREEN: icon = EH_KEY_ICON_SCREENSHOT; break;
+        case KC_UP: return EH_SHARED_ICON_ARROW_UP;
+        case KC_DOWN: return EH_SHARED_ICON_ARROW_DOWN;
+        case KC_LEFT: return EH_SHARED_ICON_ARROW_LEFT;
+        case KC_RIGHT: return EH_SHARED_ICON_ARROW_RIGHT;
+        case PREVWRD: return EH_SHARED_ICON_WORD_PREV;
+        case NEXTWRD: return EH_SHARED_ICON_WORD_NEXT;
+        case KC_MS_BTN1: icon = EH_KEY_ICON_MOUSE_LEFT; break;
+        case KC_MS_BTN2: icon = EH_KEY_ICON_MOUSE_RIGHT; break;
+        case KC_MS_BTN3: icon = EH_KEY_ICON_MOUSE_MIDDLE; break;
+        case KC_MS_UP: return EH_SHARED_ICON_MOUSE_UP;
+        case KC_MS_DOWN: return EH_SHARED_ICON_MOUSE_DOWN;
+        case KC_MS_LEFT: return EH_SHARED_ICON_MOUSE_MOVE_LEFT;
+        case KC_MS_RIGHT: return EH_SHARED_ICON_MOUSE_MOVE_RIGHT;
+        case KC_MS_WH_UP: icon = EH_KEY_ICON_WHEEL_UP; break;
+        case KC_MS_WH_DOWN: icon = EH_KEY_ICON_WHEEL_DOWN; break;
+        case KC_PAGE_UP: icon = EH_KEY_ICON_PAGE_UP; break;
+        case KC_PAGE_DOWN: icon = EH_KEY_ICON_PAGE_DOWN; break;
+        default: return NULL;
+    }
+    return eh_builtin_key_icons[icon];
+}
+
 static void screen_layout_set_key_content(uint8_t index, uint8_t layer, uint8_t control, uint16_t keycode) {
 #ifdef EH_APP_LAYOUT_ENABLE
     uint8_t visual = 0;
@@ -879,15 +937,24 @@ static void screen_layout_set_key_content(uint8_t index, uint8_t layer, uint8_t 
     label_execution_state[index] = 0;
     label_animation_frame[index] = 0;
     const uint8_t *bitmap = eh_pictogram_for_keycode(keycode);
+    uint8_t bitmap_width = eh_pictogram_stored_width();
+    if (keycode == LAYER_PREV) { bitmap = layer_prev_icon; bitmap_width = 35; }
+    if (keycode == LAYER_NEXT) { bitmap = layer_next_icon; bitmap_width = 35; }
+    if (bitmap == NULL) { bitmap = screen_layout_builtin_key_icon(keycode); bitmap_width = 35; }
     if (bitmap == NULL) {
         lv_obj_add_flag(key_icons[index], LV_OBJ_FLAG_HIDDEN);
         lv_obj_clear_flag(key_labels[index], LV_OBJ_FLAG_HIDDEN);
+        // Numbers are key labels, not pictograms: enlarge the same Medium face
+        // without changing stroke weight or multi-character shortcut labels.
+        lv_obj_set_style_text_font(key_labels[index],
+            keycode >= KC_1 && keycode <= KC_0 ? &eh_font_montserrat_28 : &eh_font_montserrat_20,
+            LV_PART_MAIN);
         get_keycode_str(label_text[index], keycode);
         lv_label_set_text_static(key_labels[index], label_text[index]);
         return;
     }
 
-    eh_render_pictogram(bitmap, eh_pictogram_stored_width(), key_icon_bits[index]);
+    eh_render_pictogram(bitmap, bitmap_width, key_icon_bits[index]);
     key_icon_dsc[index] = (lv_img_dsc_t){
         .header.always_zero = 0,
         .header.w = EH_ICON_RENDER_SIZE,

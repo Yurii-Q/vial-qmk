@@ -84,6 +84,9 @@ static lv_obj_t *label_time_minutes;
 static lv_obj_t *standby_header;
 static lv_obj_t *label_layer_icon;
 static lv_obj_t *label_layer;
+#ifdef EH_APP_LAYOUT_ENABLE
+static char standby_runtime_layer_name[23];
+#endif
 static lv_obj_t *label_mac;
 static lv_obj_t *label_layout;
 static lv_obj_t *label_hid_media_artist;
@@ -960,8 +963,16 @@ void screen_home_init(void) {
 
 bool screen_home_is_active(void) { return screen_home && lv_scr_act()==screen_home; }
 
+static const char *standby_active_layer_name(uint8_t layer) {
+#ifdef EH_APP_LAYOUT_ENABLE
+    if (hid_app_layout_get_name(layer, standby_runtime_layer_name, sizeof(standby_runtime_layer_name)))
+        return standby_runtime_layer_name;
+#endif
+    return layer_name(layer);
+}
+
 void screen_home_load(void) {
-    lv_label_set_text(label_layer, layer_name(get_current_layer()));
+    lv_label_set_text(label_layer, standby_active_layer_name(get_current_layer()));
     lv_scr_load(screen_home);
     display_apply_brightness();
 }
@@ -1019,6 +1030,15 @@ void screen_home_housekeep(void) {
     uint8_t cur_lang  = split_get_lang();
     bool hid_active = is_hid_active();
     bool mac = split_get_mac();
+    // Refresh the real active layer even if a hidden layout screen already
+    // consumed layer_name_updated. Do this before HID/typing early returns.
+    const char *active_layer_name = standby_active_layer_name(cur_layer);
+    if (prev_layer != cur_layer || strcmp(lv_label_get_text(label_layer), active_layer_name) != 0) {
+        lv_label_set_text(label_layer, active_layer_name);
+        position_clock_labels();
+        prev_layer = cur_layer;
+        layer_name_updated = false;
+    }
 #ifdef EH_DATE_SETTINGS_ENABLE
     update_date();
     apply_clock_element_visibility();
@@ -1045,14 +1065,6 @@ void screen_home_housekeep(void) {
         toggle_hidden(screen_home_media,hid_active);
 #endif
         prev_hid_active = hid_active;
-        return;
-    }
-
-    if (prev_layer != cur_layer || layer_name_updated) {
-        lv_label_set_text(label_layer, layer_name(cur_layer));
-        position_clock_labels();
-        prev_layer         = cur_layer;
-        layer_name_updated = false;
         return;
     }
 
