@@ -168,7 +168,20 @@ bool pre_process_record_kb(uint16_t keycode, keyrecord_t* record) {
     {
         display_process_keyevent(record->event.key.row, record->event.key.col, record->event.pressed);
 #    ifdef EH_APP_LAYOUT_ENABLE
+#        ifdef COMBO_ENABLE
+        if (IS_KEYEVENT(record->event)) {
+            uint16_t app_keycode;
+            if (hid_app_layout_get_combo_keycode(record->event.key.row, record->event.key.col, &app_keycode)) {
+                // Let QMK Combo see the keycode selected by Entropy. KC_NO needs
+                // a nonzero sentinel because get_record_keycode treats zero as
+                // "look up the Vial keymap", which could trigger a stale combo.
+                record->keycode = app_keycode == KC_NO ? UINT16_MAX : app_keycode;
+                return true;
+            }
+        }
+#        else
         if (hid_app_layout_process_keyevent(record->event.key.row, record->event.key.col, record->event.pressed)) return false;
+#        endif
 #    endif
     }
 #endif
@@ -186,6 +199,12 @@ bool encoder_update_kb(uint8_t index, bool clockwise) {
 #endif
 
 bool process_record_kb(uint16_t keycode, keyrecord_t* record) {
+#if defined(EH_HAS_DISPLAY) && defined(EH_APP_LAYOUT_ENABLE) && defined(COMBO_ENABLE)
+    // Combo delays and replays candidate key events. Dispatch the Entropy
+    // binding only after it has either rejected the combo or passed the key.
+    if (IS_KEYEVENT(record->event) &&
+        hid_app_layout_process_keyevent(record->event.key.row, record->event.key.col, record->event.pressed)) return false;
+#endif
     // Some Vial keymaps need to consume keyboard-range user slots before shared
     // Ergohaven handlers see them.
 #ifdef EH_PROCESS_RECORD_USER_FIRST

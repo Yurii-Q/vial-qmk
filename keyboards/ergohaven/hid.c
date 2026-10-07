@@ -468,6 +468,25 @@ bool hid_app_layout_process_keyevent(uint8_t row, uint8_t col, bool pressed) {
     return app_layout_dispatch_control((row - 1) * 3 + col, pressed, false);
 }
 
+bool hid_app_layout_get_combo_keycode(uint8_t row, uint8_t col, uint16_t *keycode) {
+    if (keycode == NULL) return false;
+    uint8_t control;
+    if (row == 0 && col == 2) {
+        control = 12;
+    } else if (row >= 1 && row <= 4 && col <= 2) {
+        control = (row - 1) * 3 + col;
+    } else {
+        return false;
+    }
+    if (!app_layout_session_live()) return false;
+    uint8_t layer = app_layout_current_layer();
+    if (control == 12 && app_layout_stack_counts[layer] >= 2) {
+        *keycode = KC_NO;
+        return true;
+    }
+    return hid_app_layout_get_keycode(layer, control, keycode);
+}
+
 bool hid_app_layout_process_encoder_event(uint8_t index, bool clockwise, bool pressed) {
     if (index != 0) return false;
     return app_layout_dispatch_control(clockwise ? 14 : 13, pressed, true);
