@@ -963,16 +963,20 @@ void screen_home_init(void) {
 
 bool screen_home_is_active(void) { return screen_home && lv_scr_act()==screen_home; }
 
-static const char *standby_active_layer_name(uint8_t layer) {
 #ifdef EH_APP_LAYOUT_ENABLE
+static const char *standby_active_layer_name(uint8_t layer) {
     if (hid_app_layout_get_name(layer, standby_runtime_layer_name, sizeof(standby_runtime_layer_name)))
         return standby_runtime_layer_name;
-#endif
     return layer_name(layer);
 }
+#endif
 
 void screen_home_load(void) {
+#ifdef EH_APP_LAYOUT_ENABLE
     lv_label_set_text(label_layer, standby_active_layer_name(get_current_layer()));
+#else
+    lv_label_set_text(label_layer, layer_name(get_current_layer()));
+#endif
     lv_scr_load(screen_home);
     display_apply_brightness();
 }
@@ -1030,6 +1034,7 @@ void screen_home_housekeep(void) {
     uint8_t cur_lang  = split_get_lang();
     bool hid_active = is_hid_active();
     bool mac = split_get_mac();
+#ifdef EH_APP_LAYOUT_ENABLE
     // Refresh the real active layer even if a hidden layout screen already
     // consumed layer_name_updated. Do this before HID/typing early returns.
     const char *active_layer_name = standby_active_layer_name(cur_layer);
@@ -1039,6 +1044,7 @@ void screen_home_housekeep(void) {
         prev_layer = cur_layer;
         layer_name_updated = false;
     }
+#endif
 #ifdef EH_DATE_SETTINGS_ENABLE
     update_date();
     apply_clock_element_visibility();
@@ -1068,6 +1074,16 @@ void screen_home_housekeep(void) {
         return;
     }
 
+#ifndef EH_APP_LAYOUT_ENABLE
+    if (prev_layer != cur_layer || layer_name_updated) {
+        lv_label_set_text(label_layer, layer_name(cur_layer));
+        position_clock_labels();
+        prev_layer         = cur_layer;
+        layer_name_updated = false;
+        return;
+    }
+
+#endif
     if (prev_lang != cur_lang) {
         lv_label_set_text(label_layout, cur_lang == LANG_RU ? "RU" : "EN");
         position_clock_labels();
