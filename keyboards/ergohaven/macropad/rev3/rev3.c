@@ -21,6 +21,12 @@
 #define MACROPAD_DISPLAY_SETTINGS_V026_MAGIC 0xDB
 #define MACROPAD_DISPLAY_SETTINGS_V032_MAGIC 0xDC
 #define MACROPAD_DISPLAY_SETTINGS_MAGIC 0xDD
+// DD reuses the unused bits of the obsolete C7 marker (byte 8). Zero means
+// follow accent, retaining the behavior of existing DD records without resizing.
+#define CLOCK_TEXT_CUSTOM (1 << 3)
+#define CLOCK_INFO_CUSTOM (1 << 4)
+#define CLOCK_MODIFIERS_CUSTOM (1 << 5)
+#define CLOCK_CUSTOM_MASK (CLOCK_TEXT_CUSTOM | CLOCK_INFO_CUSTOM | CLOCK_MODIFIERS_CUSTOM)
 #define MACROPAD_DISPLAY_BUTTON_STYLE_COUNT 33
 #define MACROPAD_DISPLAY_BRIGHTNESS_DEFAULT 100
 #define MACROPAD_CLOCK_STYLE_COUNT 10
@@ -89,7 +95,7 @@ static macropad_display_settings_t display_settings = {
 void kb_settings_lcd_reset(void);
 
 static void persist_display_settings(void) {
-    display_settings.legacy_magic = MACROPAD_DISPLAY_SETTINGS_V012_MAGIC;
+    display_settings.legacy_magic = MACROPAD_DISPLAY_SETTINGS_V012_MAGIC | (display_settings.legacy_magic & CLOCK_CUSTOM_MASK);
     display_settings.magic        = MACROPAD_DISPLAY_SETTINGS_MAGIC;
 #ifdef EH_DISPLAY_SETTINGS_FLASH
     eh_extra_settings_write(16, &display_settings, sizeof(display_settings));
@@ -183,6 +189,43 @@ void kb_settings_led_colors_reset(void) {
     eeconfig_update_kb_datablock(&rgb_timeout_mins, MACROPAD_RGB_TIMEOUT_EEPROM_OFFSET, sizeof(rgb_timeout_mins));
 }
 
+static bool clock_color_is_accent(const uint8_t *color) {
+    return color[0] == display_settings.red && color[1] == display_settings.green && color[2] == display_settings.blue;
+}
+
+static void infer_custom_clock_colors(void) {
+    // Older DD records have no flags; unequal colors were already independent.
+    // Equal colors carry no recoverable history, so keep their old follow behavior.
+    if (!clock_color_is_accent(&display_settings.clock_text_red)) display_settings.legacy_magic |= CLOCK_TEXT_CUSTOM;
+    if (!clock_color_is_accent(&display_settings.clock_info_red)) display_settings.legacy_magic |= CLOCK_INFO_CUSTOM;
+    if (!clock_color_is_accent(&display_settings.clock_modifiers_red)) display_settings.legacy_magic |= CLOCK_MODIFIERS_CUSTOM;
+}
+
+static bool color_is_old_beige(const uint8_t *color) {
+    return color[0] == 200 && color[1] == 178 && color[2] == 146;
+}
+
+static void normalize_legacy_clock_color(uint8_t *color) {
+    if (color_is_old_beige(color) || (color[0] == 255 && color[1] == 255 && color[2] == 255)) {
+        color[0] = display_settings.red;
+        color[1] = display_settings.green;
+        color[2] = display_settings.blue;
+    }
+}
+
+static void migrate_display_settings(void) {
+    // All legacy formats converge here AFTER missing fields are initialized.
+    if (color_is_old_beige(&display_settings.red)) {
+        display_settings.red = 209; display_settings.green = 177; display_settings.blue = 139;
+    }
+    normalize_legacy_clock_color(&display_settings.clock_text_red);
+    normalize_legacy_clock_color(&display_settings.clock_info_red);
+    normalize_legacy_clock_color(&display_settings.clock_modifiers_red);
+    display_settings.legacy_magic = MACROPAD_DISPLAY_SETTINGS_V012_MAGIC;
+    infer_custom_clock_colors();
+    persist_display_settings();
+}
+
 void kb_settings_lcd_init(void) {
 #ifdef EH_DISPLAY_SETTINGS_FLASH
     eh_extra_settings_read(16, &display_settings, sizeof(display_settings));
@@ -199,26 +242,11 @@ void kb_settings_lcd_init(void) {
         display_settings.clock_background_dim <= 100 && display_settings.clock_visible <= 1 && display_settings.clock_opacity <= 100 &&
         display_settings.clock_info_visible <= 1 && display_settings.clock_info_opacity <= 100 &&
         display_settings.clock_modifiers_visible <= 1 && display_settings.clock_modifiers_opacity <= 100) {
-        if (display_settings.magic == MACROPAD_DISPLAY_SETTINGS_MAGIC) return;
-        // Old stock settings stored white standby text and the colder beige
-        // accent. Convert only those exact defaults; leave custom colors alone.
-        if (display_settings.red == 200 && display_settings.green == 178 && display_settings.blue == 146) {
-            display_settings.red = 209; display_settings.green = 177; display_settings.blue = 139;
+        if (display_settings.magic == MACROPAD_DISPLAY_SETTINGS_MAGIC) {
+            infer_custom_clock_colors();
+            return;
         }
-        if (display_settings.clock_text_red == 255 && display_settings.clock_text_green == 255 && display_settings.clock_text_blue == 255) {
-            display_settings.clock_text_red = display_settings.red;
-            display_settings.clock_text_green = display_settings.green;
-            display_settings.clock_text_blue = display_settings.blue;
-        }
-        if (display_settings.clock_info_red == 255 && display_settings.clock_info_green == 255 && display_settings.clock_info_blue == 255) {
-            set_clock_info_defaults();
-        }
-        if (display_settings.clock_modifiers_red == 255 && display_settings.clock_modifiers_green == 255 && display_settings.clock_modifiers_blue == 255) {
-            display_settings.clock_modifiers_red = display_settings.red;
-            display_settings.clock_modifiers_green = display_settings.green;
-            display_settings.clock_modifiers_blue = display_settings.blue;
-        }
-        persist_display_settings();
+        migrate_display_settings();
         return;
     }
 
@@ -230,7 +258,7 @@ void kb_settings_lcd_init(void) {
         lcd_timeout_mins_is_valid(display_settings.lcd_timeout_mins) && display_settings.clock_colon_blink <= 1 &&
         display_settings.clock_background_dim <= 100) {
         set_clock_element_defaults();
-        persist_display_settings();
+        migrate_display_settings();
         return;
     }
 
@@ -242,7 +270,7 @@ void kb_settings_lcd_init(void) {
         lcd_timeout_mins_is_valid(display_settings.lcd_timeout_mins) && display_settings.clock_colon_blink <= 1) {
         set_clock_background_defaults();
         set_clock_element_defaults();
-        persist_display_settings();
+        migrate_display_settings();
         return;
     }
 
@@ -255,7 +283,7 @@ void kb_settings_lcd_init(void) {
         set_clock_info_defaults();
         set_clock_background_defaults();
         set_clock_element_defaults();
-        persist_display_settings();
+        migrate_display_settings();
         return;
     }
 
@@ -269,14 +297,14 @@ void kb_settings_lcd_init(void) {
         set_clock_info_defaults();
         set_clock_background_defaults();
         set_clock_element_defaults();
-        persist_display_settings();
+        migrate_display_settings();
         return;
     }
 
     if (display_settings.legacy_magic == MACROPAD_DISPLAY_SETTINGS_V012_MAGIC &&
         display_settings.style < MACROPAD_DISPLAY_BUTTON_STYLE_COUNT && display_settings.brightness <= 100) {
         set_clock_defaults();
-        persist_display_settings();
+        migrate_display_settings();
         return;
     }
 
@@ -303,7 +331,7 @@ void kb_settings_lcd_init(void) {
     display_settings.background_green = 0;
     display_settings.background_blue  = 0;
     set_clock_defaults();
-    persist_display_settings();
+    migrate_display_settings();
 }
 
 void kb_settings_lcd_reset(void) {
@@ -328,9 +356,9 @@ uint8_t get_display_accent_blue(void) {
 }
 
 void set_display_accent_red(uint8_t red) {
-    bool follow_text = display_settings.clock_text_red == display_settings.red && display_settings.clock_text_green == display_settings.green && display_settings.clock_text_blue == display_settings.blue;
-    bool follow_info = display_settings.clock_info_red == display_settings.red && display_settings.clock_info_green == display_settings.green && display_settings.clock_info_blue == display_settings.blue;
-    bool follow_modifiers = display_settings.clock_modifiers_red == display_settings.red && display_settings.clock_modifiers_green == display_settings.green && display_settings.clock_modifiers_blue == display_settings.blue;
+    bool follow_text = !(display_settings.legacy_magic & CLOCK_TEXT_CUSTOM);
+    bool follow_info = !(display_settings.legacy_magic & CLOCK_INFO_CUSTOM);
+    bool follow_modifiers = !(display_settings.legacy_magic & CLOCK_MODIFIERS_CUSTOM);
     display_settings.red = red;
     if (follow_text) display_settings.clock_text_red = red;
     if (follow_info) display_settings.clock_info_red = red;
@@ -339,9 +367,9 @@ void set_display_accent_red(uint8_t red) {
 }
 
 void set_display_accent_green(uint8_t green) {
-    bool follow_text = display_settings.clock_text_red == display_settings.red && display_settings.clock_text_green == display_settings.green && display_settings.clock_text_blue == display_settings.blue;
-    bool follow_info = display_settings.clock_info_red == display_settings.red && display_settings.clock_info_green == display_settings.green && display_settings.clock_info_blue == display_settings.blue;
-    bool follow_modifiers = display_settings.clock_modifiers_red == display_settings.red && display_settings.clock_modifiers_green == display_settings.green && display_settings.clock_modifiers_blue == display_settings.blue;
+    bool follow_text = !(display_settings.legacy_magic & CLOCK_TEXT_CUSTOM);
+    bool follow_info = !(display_settings.legacy_magic & CLOCK_INFO_CUSTOM);
+    bool follow_modifiers = !(display_settings.legacy_magic & CLOCK_MODIFIERS_CUSTOM);
     display_settings.green = green;
     if (follow_text) display_settings.clock_text_green = green;
     if (follow_info) display_settings.clock_info_green = green;
@@ -350,9 +378,9 @@ void set_display_accent_green(uint8_t green) {
 }
 
 void set_display_accent_blue(uint8_t blue) {
-    bool follow_text = display_settings.clock_text_red == display_settings.red && display_settings.clock_text_green == display_settings.green && display_settings.clock_text_blue == display_settings.blue;
-    bool follow_info = display_settings.clock_info_red == display_settings.red && display_settings.clock_info_green == display_settings.green && display_settings.clock_info_blue == display_settings.blue;
-    bool follow_modifiers = display_settings.clock_modifiers_red == display_settings.red && display_settings.clock_modifiers_green == display_settings.green && display_settings.clock_modifiers_blue == display_settings.blue;
+    bool follow_text = !(display_settings.legacy_magic & CLOCK_TEXT_CUSTOM);
+    bool follow_info = !(display_settings.legacy_magic & CLOCK_INFO_CUSTOM);
+    bool follow_modifiers = !(display_settings.legacy_magic & CLOCK_MODIFIERS_CUSTOM);
     display_settings.blue = blue;
     if (follow_text) display_settings.clock_text_blue = blue;
     if (follow_info) display_settings.clock_info_blue = blue;
@@ -430,19 +458,22 @@ uint8_t get_clock_text_blue(void) {
 }
 
 void set_clock_text_red(uint8_t red) {
-    if (red == display_settings.clock_text_red) return;
+    if (red == display_settings.clock_text_red && (display_settings.legacy_magic & CLOCK_TEXT_CUSTOM)) return;
+    display_settings.legacy_magic |= CLOCK_TEXT_CUSTOM;
     display_settings.clock_text_red = red;
     persist_display_settings();
 }
 
 void set_clock_text_green(uint8_t green) {
-    if (green == display_settings.clock_text_green) return;
+    if (green == display_settings.clock_text_green && (display_settings.legacy_magic & CLOCK_TEXT_CUSTOM)) return;
+    display_settings.legacy_magic |= CLOCK_TEXT_CUSTOM;
     display_settings.clock_text_green = green;
     persist_display_settings();
 }
 
 void set_clock_text_blue(uint8_t blue) {
-    if (blue == display_settings.clock_text_blue) return;
+    if (blue == display_settings.clock_text_blue && (display_settings.legacy_magic & CLOCK_TEXT_CUSTOM)) return;
+    display_settings.legacy_magic |= CLOCK_TEXT_CUSTOM;
     display_settings.clock_text_blue = blue;
     persist_display_settings();
 }
@@ -544,19 +575,22 @@ uint8_t get_clock_info_blue(void) {
 }
 
 void set_clock_info_red(uint8_t red) {
-    if (red == display_settings.clock_info_red) return;
+    if (red == display_settings.clock_info_red && (display_settings.legacy_magic & CLOCK_INFO_CUSTOM)) return;
+    display_settings.legacy_magic |= CLOCK_INFO_CUSTOM;
     display_settings.clock_info_red = red;
     persist_display_settings();
 }
 
 void set_clock_info_green(uint8_t green) {
-    if (green == display_settings.clock_info_green) return;
+    if (green == display_settings.clock_info_green && (display_settings.legacy_magic & CLOCK_INFO_CUSTOM)) return;
+    display_settings.legacy_magic |= CLOCK_INFO_CUSTOM;
     display_settings.clock_info_green = green;
     persist_display_settings();
 }
 
 void set_clock_info_blue(uint8_t blue) {
-    if (blue == display_settings.clock_info_blue) return;
+    if (blue == display_settings.clock_info_blue && (display_settings.legacy_magic & CLOCK_INFO_CUSTOM)) return;
+    display_settings.legacy_magic |= CLOCK_INFO_CUSTOM;
     display_settings.clock_info_blue = blue;
     persist_display_settings();
 }
@@ -624,19 +658,22 @@ uint8_t get_clock_modifiers_blue(void) {
 }
 
 void set_clock_modifiers_red(uint8_t red) {
-    if (red == display_settings.clock_modifiers_red) return;
+    if (red == display_settings.clock_modifiers_red && (display_settings.legacy_magic & CLOCK_MODIFIERS_CUSTOM)) return;
+    display_settings.legacy_magic |= CLOCK_MODIFIERS_CUSTOM;
     display_settings.clock_modifiers_red = red;
     persist_display_settings();
 }
 
 void set_clock_modifiers_green(uint8_t green) {
-    if (green == display_settings.clock_modifiers_green) return;
+    if (green == display_settings.clock_modifiers_green && (display_settings.legacy_magic & CLOCK_MODIFIERS_CUSTOM)) return;
+    display_settings.legacy_magic |= CLOCK_MODIFIERS_CUSTOM;
     display_settings.clock_modifiers_green = green;
     persist_display_settings();
 }
 
 void set_clock_modifiers_blue(uint8_t blue) {
-    if (blue == display_settings.clock_modifiers_blue) return;
+    if (blue == display_settings.clock_modifiers_blue && (display_settings.legacy_magic & CLOCK_MODIFIERS_CUSTOM)) return;
+    display_settings.legacy_magic |= CLOCK_MODIFIERS_CUSTOM;
     display_settings.clock_modifiers_blue = blue;
     persist_display_settings();
 }

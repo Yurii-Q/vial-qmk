@@ -169,13 +169,26 @@ bool pre_process_record_kb(uint16_t keycode, keyrecord_t* record) {
         display_process_keyevent(record->event.key.row, record->event.key.col, record->event.pressed);
 #    ifdef EH_APP_LAYOUT_ENABLE
 #        ifdef COMBO_ENABLE
-        if (IS_KEYEVENT(record->event)) {
-            uint16_t app_keycode;
-            if (hid_app_layout_get_combo_keycode(record->event.key.row, record->event.key.col, &app_keycode)) {
-                // Let QMK Combo see the keycode selected by Entropy. KC_NO needs
-                // a nonzero sentinel because get_record_keycode treats zero as
-                // "look up the Vial keymap", which could trigger a stale combo.
-                record->keycode = app_keycode == KC_NO ? UINT16_MAX : app_keycode;
+        if (IS_KEYEVENT(record->event) && record->event.key.row < MATRIX_ROWS && record->event.key.col < MATRIX_COLS) {
+            // Combo matches chord releases by keycode, not physical position.
+            // Keep the press-time override even if the combo changes layers or
+            // Entropy replaces/disables its layout while the key is held. Zero
+            // means the press used QMK's normal keymap/layer-cache path.
+            static uint16_t combo_keycodes[MATRIX_ROWS][MATRIX_COLS];
+            uint16_t *held_keycode = &combo_keycodes[record->event.key.row][record->event.key.col];
+            if (record->event.pressed) {
+                uint16_t app_keycode;
+                *held_keycode = 0;
+                if (hid_app_layout_get_combo_keycode(record->event.key.row, record->event.key.col, &app_keycode)) {
+                    // KC_NO needs a nonzero sentinel: get_record_keycode treats
+                    // zero as "look up the Vial keymap".
+                    *held_keycode = app_keycode == KC_NO ? UINT16_MAX : app_keycode;
+                }
+            }
+            uint16_t app_keycode = *held_keycode;
+            if (!record->event.pressed) *held_keycode = 0;
+            if (app_keycode != 0) {
+                record->keycode = app_keycode;
                 return true;
             }
         }
