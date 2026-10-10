@@ -218,7 +218,7 @@ void kb_settings_init(void){kb_settings_lcd_init();}
 rev3=(ROOT/'keyboards/ergohaven/macropad/rev3/rev3.c').read_text()
 reset+='\n'+rev3[rev3.index('#define MACROPAD_RGB_TIMEOUT_DEFAULT_MINS'):rev3.index('#ifndef EH_DISPLAY_SETTINGS_FLASH')]
 reset+='\nstatic macropad_display_settings_t display_settings;\n'
-for name in ['persist_display_settings','lcd_timeout_mins_is_valid','set_clock_info_defaults','set_clock_background_defaults','set_clock_element_defaults','set_clock_defaults','kb_settings_lcd_init','kb_settings_lcd_reset']:
+for name in ['persist_display_settings','lcd_timeout_mins_is_valid','set_clock_info_defaults','set_clock_background_defaults','set_clock_element_defaults','set_clock_defaults','clock_color_is_accent','infer_custom_clock_colors','color_is_old_beige','normalize_legacy_clock_color','migrate_display_settings','kb_settings_lcd_init','kb_settings_lcd_reset']:
  reset+='\n'+function('keyboards/ergohaven/macropad/rev3/rev3.c',name)+'\n'
 reset+='\n'+function('keyboards/ergohaven/src/eh_settings.c','kb_settings_reset')
 reset+=r'''
