@@ -474,11 +474,16 @@ static bool backlight_handlers_master(matrix_row_t master_matrix[], matrix_row_t
 }
 
 static void backlight_handlers_slave(matrix_row_t master_matrix[], matrix_row_t slave_matrix[]) {
+#ifndef KEYBOARD_ergohaven_sm62
     split_shared_memory_lock();
     uint8_t backlight_level = split_shmem->backlight_level;
     split_shared_memory_unlock();
 
     backlight_level_noeeprom(backlight_level);
+#endif
+    /* SM62 has per-half LCD brightness and a local panel power policy.
+     * Applying generic master backlight packets here fights that policy and
+     * can pulse a lit peer dark (or relight an explicitly disabled panel). */
 }
 
 #    define TRANSACTIONS_BACKLIGHT_MASTER() TRANSACTION_HANDLER_MASTER(backlight)

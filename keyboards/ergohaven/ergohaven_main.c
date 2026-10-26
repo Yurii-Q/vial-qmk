@@ -175,6 +175,12 @@ bool pre_process_record_kb(uint16_t keycode, keyrecord_t* record) {
             // Entropy replaces/disables its layout while the key is held. Zero
             // means the press used QMK's normal keymap/layer-cache path.
             static uint16_t combo_keycodes[MATRIX_ROWS][MATRIX_COLS];
+#if defined(KEYBOARD_ergohaven_sm62)
+            static uint32_t combo_revisions[MATRIX_ROWS][MATRIX_COLS];
+            static uint8_t combo_layers[MATRIX_ROWS][MATRIX_COLS];
+            uint32_t *held_revision = &combo_revisions[record->event.key.row][record->event.key.col];
+            uint8_t *held_layer = &combo_layers[record->event.key.row][record->event.key.col];
+#endif
             uint16_t *held_keycode = &combo_keycodes[record->event.key.row][record->event.key.col];
             if (record->event.pressed) {
                 uint16_t app_keycode;
@@ -183,12 +189,19 @@ bool pre_process_record_kb(uint16_t keycode, keyrecord_t* record) {
                     // KC_NO needs a nonzero sentinel: get_record_keycode treats
                     // zero as "look up the Vial keymap".
                     *held_keycode = app_keycode == KC_NO ? UINT16_MAX : app_keycode;
+#if defined(KEYBOARD_ergohaven_sm62)
+                    hid_app_layout_capture_identity(held_revision, held_layer);
+#endif
                 }
             }
             uint16_t app_keycode = *held_keycode;
             if (!record->event.pressed) *held_keycode = 0;
             if (app_keycode != 0) {
                 record->keycode = app_keycode;
+#if defined(KEYBOARD_ergohaven_sm62)
+                record->app_layout_revision = *held_revision;
+                record->app_layout_layer = *held_layer;
+#endif
                 return true;
             }
         }
@@ -216,7 +229,11 @@ bool process_record_kb(uint16_t keycode, keyrecord_t* record) {
     // Combo delays and replays candidate key events. Dispatch the Entropy
     // binding only after it has either rejected the combo or passed the key.
     if (IS_KEYEVENT(record->event) &&
+#if defined(KEYBOARD_ergohaven_sm62)
+        hid_app_layout_process_cached_keyevent(record->event.key.row, record->event.key.col, record->event.pressed, record->keycode, record->app_layout_revision, record->app_layout_layer)) return false;
+#else
         hid_app_layout_process_keyevent(record->event.key.row, record->event.key.col, record->event.pressed)) return false;
+#endif
 #endif
     // Some Vial keymaps need to consume keyboard-range user slots before shared
     // Ergohaven handlers see them.

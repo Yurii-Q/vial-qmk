@@ -58,6 +58,12 @@ subprocess.run([*cmd,*['-I'+str(d) for d in includes],str(src),*fonts,*sorted(st
 empty = subprocess.run([str(exe)], input='', text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 (a.output/'empty-input.txt').write_text(empty.stdout)
 assert empty.returncode != 0, 'zero-check run falsely succeeded'
+# The host integration replays every prefix, including the initial sleep-only
+# prefix. S asserts a real state transition and must count as executed coverage.
+initial = subprocess.run([str(exe)], input='S\n', text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+(a.output/'initial-host-prefix.txt').write_text(initial.stdout)
+assert initial.returncode == 0, initial.stdout
+assert 'PASS 1 ' in initial.stdout, initial.stdout
 total = 0
 for name, commands in scenarios().items():
     (a.output/(name+'.stdin')).write_text(commands)

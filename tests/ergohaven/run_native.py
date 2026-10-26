@@ -154,7 +154,15 @@ for rev,size in [('rev2',2097152),('rev3',4194304)]:
  out.append(run('background_'+rev,background,['-DPICO_FLASH_SIZE_BYTES='+str(size),'-DWEAR_LEVELING_RP2040_FLASH_BASE=0x1fc000','-DEH_FAST_UPLOAD_ENABLE']))
 # Extract whole function bodies verbatim; mock only LVGL and peripheral calls.
 def function(path,name):
- src=(ROOT/path).read_text();m=re.search(r'^(?:static )?[a-zA-Z_][^\n;]*\b'+name+r'\([^;\n]*\)\s*\{',src,re.M)
+ src=(ROOT/path).read_text();matches=list(re.finditer(r'^(?:static )?[a-zA-Z_][^\n;]*\b'+name+r'\([^;\n]*\)\s*\{',src,re.M))
+ # This fixture is Macropad, not SM62. The port has an earlier board-only
+ # power implementation; keep the actual non-SM62 branch rather than stubbing
+ # its missing transitive hardware calls.
+ if path=='keyboards/ergohaven/src/display/eh_display.c' and name=='display_turn_on':
+  assert len(matches)==2 and 'sm62_request_display_power(true)' in src[matches[0].start():matches[1].start()]
+  m=matches[1]
+ else:
+  m=matches[0] if matches else None
  assert m,name
  start=m.start();pos=src.index('{',start);depth=1;end=pos+1
  while depth:
@@ -212,6 +220,8 @@ void display_apply_background_color(uint8_t r,uint8_t g,uint8_t b){(void)r;(void
 void display_apply_button_style(uint8_t s){(void)s;}
 void display_apply_brightness(void){}void display_apply_clock_settings(void){}
 void kb_settings_ruen_reset(void){} void kb_settings_layer_labels_reset(void){} void kb_settings_pointing_reset(void){} void kb_settings_split_pointing_reset(void){} void kb_settings_led_colors_reset(void){}
+/* The optional extra-settings hook is weak/no-op for Macropad. */
+void kb_settings_extra_reset(void){}
 void kb_settings_init(void){kb_settings_lcd_init();}
 '''
 # Keep the actual reset body and type/constant definitions from rev3, without unrelated getters.

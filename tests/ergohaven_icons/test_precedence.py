@@ -21,7 +21,21 @@ harness = r'''
 typedef struct { struct {int always_zero,w,h,cf;} header; int data_size; const uint8_t *data;} lv_img_dsc_t;
 static uint8_t label_visual[1],label_execution_state[1],label_animation_frame[1],key_icon_bits[1][630];
 static lv_img_dsc_t key_icon_dsc[1];
-static int key_icon_colors[1],accent_color_blue,display_background_color,eh_font_montserrat_28,eh_font_montserrat_20;
+static int key_icon_colors[1],accent_color_blue,display_background_color;
+static struct {int line_height;} eh_font_montserrat_28={28},eh_font_montserrat_20={20};
+typedef struct {int x,y;} lv_point_t;
+#define QK_MODS_GET_MODS(kc) (((kc) >> 8) & 0x1F)
+#define LV_COORD_MAX 32767
+#define LV_TEXT_FLAG_NONE 0
+#define LV_LABEL_LONG_CLIP 1
+#define LV_LABEL_LONG_WRAP 2
+#define LV_SIZE_CONTENT -1
+// This storage/precedence fixture never measures shortcut labels. Real text
+// geometry is covered by the pinned-LVGL label/wake regressions, not this stub.
+#define lv_txt_get_size(a,b,c,d,e,f,g) (assert(!"unexpected text measurement in icon precedence test"),(a)->x=0,(a)->y=0)
+#define lv_obj_set_style_transform_zoom(a,b,c) ((void)(a),(void)(b),(void)(c))
+#define lv_label_set_long_mode(a,b) ((void)(a),(void)(b))
+#define lv_obj_set_size(a,b,c) ((void)(a),(void)(b),(void)(c))
 static bool key_pressed[1];
 static void *key_icons[1],*key_labels[1];
 static char label_text[1][32];
