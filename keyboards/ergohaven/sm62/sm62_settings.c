@@ -4,6 +4,7 @@
 #include "sm62_side.h"
 #include "eeconfig.h"
 #include "timer.h"
+#include "sync_timer.h"
 #include "transactions.h"
 #include <string.h>
 
@@ -39,6 +40,36 @@ static uint32_t local_mode_changed_at;
 static bool local_mode_transition_pending;
 static bool local_mode_readback_seen;
 static uint32_t local_mode_readback_at;
+
+/* Runtime only: never extend the EEPROM record or the host QSID protocol.
+ * Epochs use QMK's shared clock so the peer counts from the actual SET, not
+ * from its delayed settings RPC. A validity bit permits an epoch of zero. */
+static uint8_t orbit_restart_valid;
+static uint32_t orbit_restart_epoch[2];
+static uint32_t local_orbit_restart_at;
+static bool local_orbit_restart_valid;
+
+static void orbit_restart_local(uint32_t epoch) {
+    uint32_t elapsed = sync_timer_read32() - epoch;
+    /* Independent clock snapshots may briefly put an edit just ahead of us. */
+    if (elapsed > UINT32_MAX - 1000U) elapsed = 0;
+    /* RPC runs on the serial worker. Publish only the runtime anchor here;
+     * the main-loop display policy owns all visible screen changes. */
+    __atomic_store_n(&local_orbit_restart_at, timer_read32() - elapsed, __ATOMIC_RELEASE);
+    __atomic_store_n(&local_orbit_restart_valid, true, __ATOMIC_RELEASE);
+}
+
+uint32_t sm62_local_orbit_idle_ms(uint32_t activity_idle) {
+    if (!__atomic_load_n(&local_orbit_restart_valid, __ATOMIC_ACQUIRE)) return activity_idle;
+    uint32_t restart_idle = timer_elapsed32(__atomic_load_n(&local_orbit_restart_at, __ATOMIC_ACQUIRE));
+    return restart_idle < activity_idle ? restart_idle : activity_idle;
+}
+
+static void orbit_restart_setting(uint8_t side) {
+    orbit_restart_epoch[side] = sync_timer_read32();
+    orbit_restart_valid |= 1U << side;
+    if (side == sm62_local_side_index()) orbit_restart_local(orbit_restart_epoch[side]);
+}
 
 static void schedule_persist(void) {
     pending_persist = true;
@@ -233,6 +264,11 @@ int sm62_setting_set(const qmk_settings_proto_t *proto, const void *setting, siz
             }
         }
         *target = value;
+        /* Only explicit off->on or a genuinely changed idle timeout starts
+         * a new idle period. Mode normalization is not an idle enable edit. */
+        if (index < 10 && ((index % 5 == 1 && value != 0) || index % 5 == 2)) {
+            orbit_restart_setting(index / 5);
+        }
         schedule_persist();
         pending_sync = true;
         sync_requested_at = timer_read32();
@@ -260,15 +296,30 @@ bool sm62_local_mode_transition_pending(void) {
 static void sm62_settings_rpc(uint8_t in_len, const void *in, uint8_t out_len, void *out) {
     (void)out_len;
     (void)out;
-    if (in_len != sizeof(saved) + sizeof(lcd_idle) || !in) return;
+    if (in_len != sizeof(saved) + sizeof(lcd_idle) + 1U + sizeof(orbit_restart_epoch) || !in) return;
     sm62_saved_settings_t received;
     memcpy(&received, in, sizeof(received));
     const uint8_t *received_idle = (const uint8_t *)in + sizeof(saved);
     if (!valid(&received) || !lcd_idle_valid(received_idle)) return;
-    if (memcmp(&saved, &received, sizeof(saved)) == 0 && memcmp(lcd_idle, received_idle, sizeof(lcd_idle)) == 0) return;
-    saved = received;
-    memcpy(lcd_idle, received_idle, sizeof(lcd_idle));
-    schedule_persist();
+    const uint8_t *runtime = received_idle + sizeof(lcd_idle);
+    uint8_t received_valid = runtime[0];
+    if (received_valid & ~3U) return;
+    uint32_t epochs[2];
+    memcpy(epochs, runtime + 1, sizeof(epochs));
+    uint8_t local = sm62_local_side_index();
+    if ((received_valid & (1U << local)) &&
+        (!(orbit_restart_valid & (1U << local)) || epochs[local] != orbit_restart_epoch[local])) {
+        orbit_restart_local(epochs[local]);
+    }
+    orbit_restart_valid = received_valid;
+    memcpy(orbit_restart_epoch, epochs, sizeof(epochs));
+    /* A new runtime epoch can arrive with identical saved bytes (off/on
+     * coalesced before sync). Apply it, but do not wear EEPROM for it. */
+    if (memcmp(&saved, &received, sizeof(saved)) != 0 || memcmp(lcd_idle, received_idle, sizeof(lcd_idle)) != 0) {
+        saved = received;
+        memcpy(lcd_idle, received_idle, sizeof(lcd_idle));
+        schedule_persist();
+    }
 }
 
 void sm62_settings_register_rpc(void) {
@@ -291,9 +342,11 @@ void sm62_settings_sync_task(void) {
     if (delay_sync_after_host_set &&
         (timer_elapsed32(sync_requested_at) < 1000U || local_mode_transition_pending)) return;
     last_sync_attempt = timer_read32();
-    uint8_t packet[sizeof(saved) + sizeof(lcd_idle)];
+    uint8_t packet[sizeof(saved) + sizeof(lcd_idle) + 1U + sizeof(orbit_restart_epoch)];
     memcpy(packet, &saved, sizeof(saved));
     memcpy(packet + sizeof(saved), lcd_idle, sizeof(lcd_idle));
+    packet[sizeof(saved) + sizeof(lcd_idle)] = orbit_restart_valid;
+    memcpy(packet + sizeof(saved) + sizeof(lcd_idle) + 1U, orbit_restart_epoch, sizeof(orbit_restart_epoch));
     if (transaction_rpc_send(RPC_SM62_SETTINGS, sizeof(packet), packet)) {
         pending_sync = false;
         delay_sync_after_host_set = false;

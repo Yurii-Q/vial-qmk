@@ -36,6 +36,7 @@ static unsigned writes;
 static uint32_t now;
 static uint8_t side;
 static uint32_t timer_read32(void) {return now;}
+static uint32_t sync_timer_read32(void) {return now;}
 static uint32_t timer_elapsed32(uint32_t t) {return now-t;}
 static uint8_t sm62_local_side_index(void) {return side;}
 static bool is_keyboard_master(void) {return false;}

@@ -17,6 +17,7 @@
 
 void kb_settings_layer_labels_init(void);
 #include <string.h>
+#include "fps_bridge.inc"
 
 /* Physical handedness uses QMK's SPLIT_HAND_PIN implementation (GP29).
  * Do not override is_keyboard_left_impl: the same image serves both halves. */
@@ -80,6 +81,7 @@ static void diag_put32(uint8_t *p, uint32_t v) {
 }
 /* Diagnostic RPC is registered at boot, but only executed on host request. */
 static void sm62_diag_rpc(uint8_t in_len, const void *in, uint8_t out_len, void *out) {
+    if (in_len) { (void)sm62_fps_rpc(in_len,in,out_len,out); return; }
     (void)in_len; (void)in;
     if (out_len != 32 || !out) return;
     uint8_t *p=out;
@@ -91,6 +93,7 @@ static void sm62_diag_rpc(uint8_t in_len, const void *in, uint8_t out_len, void 
     diag_put16(p+30,diag_clip(timer_read32()));
 }
 bool sm62_diag_raw(uint8_t *data, uint8_t length) {
+    if (sm62_fps_raw(data,length)) return true;
     if (length < 4 || data[0] != 0xD7 || data[1] != 0x62 || data[2] != 1) return false;
     uint8_t index=data[3], reply[32]={0};
     reply[0]=0xD7; reply[1]=0x62; reply[2]=1; reply[3]=index;
@@ -120,9 +123,12 @@ bool sm62_diag_raw(uint8_t *data, uint8_t length) {
 void sm62_diag_house(uint32_t start);
 void sm62_diag_stage(uint8_t stage);
 void housekeeping_task_user(void) {
+    sm62_fps_tick();
     uint32_t start=timer_read32();
     sm62_settings_sync_task();
+    uint32_t app_start=timer_read32();
     hid_app_layout_split_task();
+    fps_duration(&fps_data,app_start,timer_read32(),24);
     display_housekeeping_task();
     sm62_diag_house(start);
 }

@@ -13,6 +13,13 @@ typedef struct {
     uint16_t crc;
 } sm62_app_image_t;
 static sm62_app_image_t sm62_app_tx, sm62_app_rx;
+// Separate capture candidate from the last fully acknowledged image. Never
+// infer equality from the visual generation: Default EEPROM has other writers.
+static sm62_app_image_t sm62_app_acked;
+static bool sm62_app_acked_valid, sm62_app_rx_retained;
+static uint32_t sm62_app_heartbeat_time, sm62_app_published_generation;
+static uint8_t sm62_app_published_identity[20];
+static bool sm62_app_published_identity_seen;
 static char sm62_app_defaults[16][LAYER_LABEL_SIZE];
 static uint16_t sm62_app_default_keycodes[16][62];
 static uint32_t sm62_app_tx_epoch, sm62_app_rx_epoch, sm62_app_tx_generation;
@@ -45,6 +52,8 @@ static void sm62_app_put32(uint8_t *p, uint32_t n) {
     for (uint8_t i = 0; i < 4; ++i) p[i] = n >> (8 * i);
 }
 static void sm62_app_capture(void) {
+    extern void sm62_fps_capture(uint32_t start);
+    uint32_t diagnostic_start=timer_read32();
     memset(&sm62_app_tx, 0, sizeof(sm62_app_tx));
     sm62_app_tx.format = 1;
     sm62_app_tx.active = app_layout_session_live();
@@ -63,6 +72,7 @@ static void sm62_app_capture(void) {
     }
     sm62_app_tx.identity_seen = app_layout_wake_identity_seen;
     sm62_app_tx.crc = sm62_app_crc(&sm62_app_tx, offsetof(sm62_app_image_t, crc));
+    sm62_fps_capture(diagnostic_start);
 }
 static bool sm62_app_image_valid(void) {
     if (sm62_app_rx.format != 1 || sm62_app_rx.active > 1 || sm62_app_rx.identity_seen > 1 ||
@@ -92,12 +102,19 @@ static void sm62_app_publish(void) {
     app_layout_revision = sm62_app_rx.revision;
     app_layout_sync_time = timer_read32();
     app_layout_visual_generation++;
+    sm62_app_published_generation = app_layout_visual_generation;
     if (sm62_app_rx.identity_seen) {
         bool changed = !app_layout_wake_identity_seen || memcmp(app_layout_wake_identity, sm62_app_rx.identity, 20) != 0;
         memcpy(app_layout_wake_identity, sm62_app_rx.identity, 20);
         app_layout_wake_identity_seen = true;
         if (changed) hid_app_layout_changed_kb();
     }
+    // Unknown incoming identity deliberately preserves the peer's last known
+    // identity, including across a master reset. Fence that effective identity,
+    // not merely the possibly-unknown identity field in the received image.
+    sm62_app_published_identity_seen = app_layout_wake_identity_seen;
+    memcpy(sm62_app_published_identity, app_layout_wake_identity, 20);
+    __atomic_store_n(&sm62_app_rx_retained, true, __ATOMIC_RELEASE);
 }
 static void sm62_app_rpc(uint8_t in_len, const void *in, uint8_t out_len, void *out) {
     if (out_len != 5 || !out) return;
@@ -111,6 +128,24 @@ static void sm62_app_rpc(uint8_t in_len, const void *in, uint8_t out_len, void *
     uint32_t epoch = app_layout_read_u32(p);
     uint16_t offset = p[4] | ((uint16_t)p[5] << 8);
     uint8_t n = p[6];
+    // n=0, offset=0xffff is an explicit retained-image heartbeat, never DATA.
+    // CRC, revision, active bit and semantic identity bind it to the exact
+    // published epoch. A partial/new/expired image cannot acknowledge it.
+    if (!n && offset == 0xffff) {
+        if (__atomic_load_n(&sm62_app_rx_pending, __ATOMIC_ACQUIRE) ||
+            !__atomic_load_n(&sm62_app_rx_retained, __ATOMIC_ACQUIRE) ||
+            !sm62_app_rx_seen || sm62_app_rx_invalid || epoch != sm62_app_rx_epoch ||
+            sm62_app_rx_offset != sizeof(sm62_app_rx) ||
+            timer_elapsed32(sm62_app_rx_time) >= EH_APP_LAYOUT_TIMEOUT_MS ||
+            (p[7] | ((uint16_t)p[8] << 8)) != sm62_app_rx.crc ||
+            app_layout_read_u32(p + 9) != sm62_app_rx.revision ||
+            p[13] != sm62_app_rx.active || p[14] != sm62_app_rx.identity_seen ||
+            memcmp(p + 15, sm62_app_rx.identity, 20) || p[35] || p[36] || p[37]) return;
+        sm62_app_heartbeat_time = timer_read32();
+        __atomic_store_n(&sm62_app_rx_pending, 2, __ATOMIC_RELEASE);
+        ack[0] = 2;
+        return;
+    }
     if (!n || n > 31 || offset % 31 || (uint32_t)offset + n > sizeof(sm62_app_rx) ||
         (n != 31 && offset + n != sizeof(sm62_app_rx))) return;
     // Freeze the completed buffer until main-loop publication finishes.
@@ -127,6 +162,7 @@ static void sm62_app_rpc(uint8_t in_len, const void *in, uint8_t out_len, void *
         sm62_app_rx_offset = 0;
         sm62_app_rx_time = timer_read32();
         sm62_app_rx_invalid = false;
+        __atomic_store_n(&sm62_app_rx_retained, false, __ATOMIC_RELEASE);
     }
     sm62_app_put32(ack + 1, sm62_app_rx_epoch);
     if (epoch != sm62_app_rx_epoch) return;
@@ -160,15 +196,20 @@ static void sm62_app_split_step(void) {
     bool live = app_layout_session_live();
     bool changed = !sm62_app_tx_started || sm62_app_tx_live != live ||
                    (sm62_app_tx_offset == sizeof(sm62_app_tx) && sm62_app_tx_generation != app_layout_visual_generation);
+    bool heartbeat = false;
     if (changed || (sm62_app_tx_offset == sizeof(sm62_app_tx) && timer_elapsed32(sm62_app_tx_time) >= 500)) {
         sm62_app_capture();
         sm62_app_tx_generation = app_layout_visual_generation;
         sm62_app_tx_live = live;
-        sm62_app_tx_epoch++;
-        sm62_app_tx_offset = 0;
+        heartbeat = sm62_app_acked_valid && sm62_app_tx_offset == sizeof(sm62_app_tx) &&
+                    memcmp(&sm62_app_tx, &sm62_app_acked, sizeof(sm62_app_tx)) == 0;
+        if (!heartbeat) {
+            sm62_app_tx_epoch++;
+            sm62_app_tx_offset = 0;
+        }
         sm62_app_tx_started = true;
     }
-    if (sm62_app_tx_offset == sizeof(sm62_app_tx)) return;
+    if (sm62_app_tx_offset == sizeof(sm62_app_tx) && !heartbeat) return;
     uint8_t packet[40] = {0}, ack[5] = {0};
     sm62_app_put32(packet, sm62_app_tx_epoch);
     packet[4] = sm62_app_tx_offset;
@@ -177,12 +218,28 @@ static void sm62_app_split_step(void) {
     uint8_t n = remaining > 31 ? 31 : remaining;
     packet[6] = n;
     memcpy(packet + 7, (uint8_t *)&sm62_app_tx + sm62_app_tx_offset, n);
+    if (heartbeat) {
+        packet[4] = packet[5] = 0xff;
+        packet[6] = 0;
+        packet[7] = sm62_app_tx.crc; packet[8] = sm62_app_tx.crc >> 8;
+        sm62_app_put32(packet + 9, sm62_app_tx.revision);
+        packet[13] = sm62_app_tx.active;
+        packet[14] = sm62_app_tx.identity_seen;
+        memcpy(packet + 15, sm62_app_tx.identity, 20);
+        // Also bound retry frequency when the link is disconnected.
+        sm62_app_tx_time = timer_read32();
+    }
     uint16_t crc = sm62_app_crc(packet, 38);
     packet[38] = crc; packet[39] = crc >> 8;
     if (!transaction_rpc_exec(RPC_SM62_APP_LAYOUT, sizeof(packet), packet, sizeof(ack), ack)) return;
-    if (ack[0]) {
+    if (ack[0] == (heartbeat ? 2 : 1) && app_layout_read_u32(ack + 1) == sm62_app_tx_epoch) {
+        if (heartbeat) return;
         sm62_app_tx_offset += n;
-        if (sm62_app_tx_offset == sizeof(sm62_app_tx)) sm62_app_tx_time = timer_read32();
+        if (sm62_app_tx_offset == sizeof(sm62_app_tx)) {
+            sm62_app_tx_time = timer_read32();
+            memcpy(&sm62_app_acked, &sm62_app_tx, sizeof(sm62_app_acked));
+            sm62_app_acked_valid = true;
+        }
     } else {
         // Peer retained a newer epoch across a USB-master reset. Negotiate a
         // strictly newer full image rather than accepting any old BEGIN.
@@ -194,8 +251,25 @@ static void sm62_app_split_step(void) {
 }
 void hid_app_layout_split_task(void) {
     if (!is_keyboard_master()) {
-        if (__atomic_load_n(&sm62_app_rx_pending, __ATOMIC_ACQUIRE)) {
-            sm62_app_publish();
+        uint8_t pending = __atomic_load_n(&sm62_app_rx_pending, __ATOMIC_ACQUIRE);
+        if (pending) {
+            if (pending == 1) sm62_app_publish();
+            else {
+                // Renew only the retained publication, never revive a locally
+                // expired/disabled/replaced session. No copies or LVGL calls.
+                bool same = sm62_app_published_generation == app_layout_visual_generation &&
+                            app_layout_revision == sm62_app_rx.revision &&
+                            app_layout_active == (bool)sm62_app_rx.active &&
+                            timer_elapsed32(sm62_app_rx_time) < EH_APP_LAYOUT_TIMEOUT_MS &&
+                            timer_elapsed32(sm62_app_heartbeat_time) < EH_APP_LAYOUT_TIMEOUT_MS &&
+                            (!sm62_app_rx.active || app_layout_session_live()) &&
+                            app_layout_wake_identity_seen == sm62_app_published_identity_seen &&
+                            !memcmp(app_layout_wake_identity, sm62_app_published_identity, 20);
+                if (same) {
+                    sm62_app_rx_time = sm62_app_heartbeat_time;
+                    if (sm62_app_rx.active) app_layout_sync_time = sm62_app_heartbeat_time;
+                } else __atomic_store_n(&sm62_app_rx_retained, false, __ATOMIC_RELEASE);
+            }
             __atomic_store_n(&sm62_app_rx_pending, 0, __ATOMIC_RELEASE);
         }
         return;

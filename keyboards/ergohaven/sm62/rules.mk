@@ -62,3 +62,5 @@ SRC += screen_keymap.c
 
 SRC += keyboards/ergohaven/macropad/sm62_font_zen_regular_24.c
 SRC += keyboards/ergohaven/macropad/sm62_font_zen_bold_24.c
+SRC += player_fonts.c
+SRC += sm62_font_cjk_24.c

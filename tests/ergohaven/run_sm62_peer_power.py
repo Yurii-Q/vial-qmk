@@ -39,11 +39,13 @@ static uint32_t sm62_display_boot_elapsed(void){return now;}
 static bool sm62_keymap_observe_matrix(void){return false;}
 static bool sm62_keymap_visual_active(void){return false;}
 static uint16_t sm62_local_keymap_hold_ms(void){return 500;}
+static uint32_t sm62_local_orbit_idle_ms(uint32_t idle){return idle;} /* No settings edits in this power-only fixture. */
 static void sm62_main_frame_completed(void){}
 static void sm62_player_frame_completed(void){}
 static void sm62_orbit_frame_completed(void){}
 static void sm62_orbit_restart(void){}
 static void sm62_diag_frame(void){}
+static void sm62_fps_frame(uint8_t screen){(void)screen;}
 typedef struct{void(*init)(void),(*load)(void),(*housekeep)(void);}eh_screen_t;
 static void noop(void){}
 const eh_screen_t eh_screen_clock={noop,noop,noop},eh_screen_player={noop,noop,noop},eh_screen_keymap={noop,noop,noop},eh_screen_orbit={noop,noop,noop};

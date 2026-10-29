@@ -49,6 +49,7 @@ pre=r'''
 static uint32_t now=10000,layer_state=1,default_layer_state=1;
 static bool left=true,master=true,matrix[10][7];
 static uint32_t timer_read32(void){return now;}
+static uint32_t sync_timer_read32(void){return now;}
 static uint32_t timer_elapsed32(uint32_t t){return now-t;}
 static bool is_keyboard_left(void){return left;}
 static bool is_keyboard_master(void){return master;}
@@ -90,6 +91,9 @@ static void sm62_orbit_frame_completed(void){}
 static void sm62_orbit_restart(void){}
 static unsigned completed_frames;
 static void sm62_diag_frame(void){completed_frames++;}
+#include "keyboards/ergohaven/sm62/fps_measure.h"
+static fps_state frame_measurement;
+static void sm62_fps_frame(uint8_t screen){fps_frame(&frame_measurement,now,screen);}
 static void noop(void){}
 const eh_screen_t eh_screen_clock={noop,noop,noop},eh_screen_player={noop,noop,noop},eh_screen_orbit={noop,noop,noop};
 static void get_keycode_str(char*s,uint16_t k){(void)k;strcpy(s,"A");}
@@ -109,6 +113,7 @@ static void qp_flush(void*d){(void)d;flushes++;}
 test=r'''
 static void render(void){lv_tick_inc(32);lv_refr_now(NULL);}
 static void setup(void){
+ fps_arm(&frame_measurement,now,42,0,0);
  defaults();lv_init();static lv_disp_draw_buf_t buf;static lv_color_t colors[240*28];lv_disp_draw_buf_init(&buf,colors,0,240*28);
  static lv_disp_drv_t drv;lv_disp_drv_init(&drv);drv.hor_res=240;drv.ver_res=280;drv.draw_buf=&buf;drv.flush_cb=qp_lvgl_flush;lv_disp_drv_register(&drv);
  root_view=lv_obj_create(NULL);lv_scr_load(root_view);display_init_screens_kb();display_housekeeping_task();render();
@@ -125,6 +130,8 @@ int main(int argc,char**argv){assert(argc==4);left=atoi(argv[2]);master=atoi(arg
   failures+=check(completed_frames==before,"detached painter must not complete a frame");
   selected_display=(void*)1;qp_lvgl_flush(driver,&area,&color);
   failures+=check(completed_frames==before+1,"final attached strip must complete exactly one frame");
+  uint32_t measured=0;for(unsigned s=0;s<5;s++)measured+=frame_measurement.words[8+s];
+  failures+=check(measured==completed_frames,"real painter forwards each complete frame to production RAM measurement exactly once");
   driver->draw_buf->flushing_last=0;
   matrix[left?1:6][2]=true;display_housekeeping_task();render();
   matrix[left?1:6][2]=false;now+=1;display_housekeeping_task();render();

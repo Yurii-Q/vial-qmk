@@ -14,6 +14,7 @@
 #include "keyboards/ergohaven/macropad/sm62_starfield.h"
 #include "sm62_starfield_control.h"
 #include "timer.h"
+#include "player_fonts.h"
 
 LV_FONT_DECLARE(sm62_font_zen_medium_12);
 LV_FONT_DECLARE(sm62_font_zen_medium_16);
@@ -100,7 +101,7 @@ static void set_track_text(const char *text) {
     displayed_text_length = text_length;
 
     lv_point_t text_size;
-    lv_txt_get_size(&text_size, text, &sm62_font_zen_regular_24, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    lv_txt_get_size(&text_size, text, sm62_player_title_font(), 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
 
     lv_anim_del(label_title, track_scroll_x);
     lv_obj_set_x(label_title, TRACK_LABEL_LEFT_PAD);
@@ -117,7 +118,7 @@ static void set_track_text(const char *text) {
      * without moving the initial text origin or the viewport's right edge. */
     lv_label_set_text_fmt(label_title, "%s   %s", text, text);
     lv_obj_set_width(label_title, LV_SIZE_CONTENT);
-    lv_coord_t period = text_size.x + 3 * lv_font_get_glyph_width(&sm62_font_zen_regular_24, ' ', ' ');
+    lv_coord_t period = text_size.x + 3 * lv_font_get_glyph_width(sm62_player_title_font(), ' ', ' ');
     lv_anim_t animation;
     lv_anim_init(&animation);
     lv_anim_set_var(&animation, label_title);
@@ -153,11 +154,11 @@ static void screen_right_player_init(void) {
     lv_obj_set_pos(title_viewport, TRACK_LABEL_X, TRACK_LABEL_Y);
     lv_obj_set_size(title_viewport, TRACK_LABEL_WIDTH, TRACK_LABEL_HEIGHT);
     lv_obj_clear_flag(title_viewport, LV_OBJ_FLAG_SCROLLABLE);
-    label_title = make_label(title_viewport, TRACK_LABEL_LEFT_PAD, 0, TRACK_TEXT_AVAILABLE, TRACK_LABEL_HEIGHT, &sm62_font_zen_regular_24, 0xFFF8E7, LV_TEXT_ALIGN_LEFT, "NO SIGNAL");
+    label_title = make_label(title_viewport, TRACK_LABEL_LEFT_PAD, 0, TRACK_TEXT_AVAILABLE, TRACK_LABEL_HEIGHT, sm62_player_title_font(), 0xFFF8E7, LV_TEXT_ALIGN_LEFT, "NO SIGNAL");
     set_track_text("NO SIGNAL");
     make_title_fade(screen_right_player);
 
-    label_artist = make_label(screen_right_player, 20, 149, 200, 32, &sm62_font_zen_bold_24, 0xFFF8E7, LV_TEXT_ALIGN_LEFT, "Waiting for host");
+    label_artist = make_label(screen_right_player, 20, 149, 200, 32, sm62_player_artist_font(), 0xFFF8E7, LV_TEXT_ALIGN_LEFT, "Waiting for host");
 
     make_box(screen_right_player, 20, 193, 200, 5, 0x837F76);
     label_progress_fill = make_box(screen_right_player, 20, 193, 0, 5, 0xFFF8E7);

@@ -52,6 +52,7 @@ static void vial_keycode_down(uint16_t k){(void)k;}
 static void vial_keycode_up(uint16_t k){(void)k;}
 static void vial_keycode_tap(uint16_t k){(void)k;}
 static void hid_app_layout_changed_kb(void){}
+void sm62_fps_capture(uint32_t start){(void)start;}
 
 static void (*callback)(uint8_t,const void*,uint8_t,void*);
 static uint8_t frames[2000][40];static unsigned count;

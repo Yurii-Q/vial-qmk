@@ -18,6 +18,7 @@ extern void sm62_player_frame_completed(void);
 extern void sm62_orbit_frame_completed(void);
 extern void sm62_orbit_restart(void);
 extern void sm62_diag_frame(void);
+extern void sm62_fps_frame(uint8_t screen);
 extern uint32_t sm62_display_boot_elapsed(void);
 
 #if SM62_FAST_RETURN
@@ -29,8 +30,9 @@ typedef enum { SM62_SCREEN_CLOCK, SM62_SCREEN_PLAYER, SM62_SCREEN_KEYMAP, SM62_S
 static sm62_screen_t active_screen = SM62_SCREEN_CLOCK;
 static eh_screen_t current_screen;
 static bool orbit_initialized;
-static bool master_display_released;
+static bool startup_display_released;
 static bool screens_were_off;
+uint8_t sm62_diag_screen(void) { return screens_were_off || sm62_local_screens_off() ? 4 : (uint8_t)active_screen; }
 #if SM62_FAST_RETURN
 static uint32_t local_activity_at;
 static uint32_t display_ready_at;
@@ -40,6 +42,7 @@ static uint32_t keymap_frame_at;
 
 /* Called only after LVGL has flushed the final chunk of a frame. */
 void display_frame_completed(void) {
+    sm62_fps_frame(sm62_diag_screen());
     sm62_diag_frame();
     if (active_screen == SM62_SCREEN_CLOCK) sm62_main_frame_completed();
     if (active_screen == SM62_SCREEN_PLAYER) sm62_player_frame_completed();
@@ -61,10 +64,10 @@ void display_init_screens_kb(void) {
     current_screen = eh_screen_clock;
     display_load_root();
     current_screen.load();
-    /* Slave lights as soon as its screen is ready; master waits for the
-     * measured slave boot window. No startup split traffic is added. */
+    /* Both panels stay dark through the same pre-init-based startup window.
+     * Releasing the peer at view init made it visibly precede the USB half.
+     * Keep this independent of USB role and the synchronized activity clock. */
     if (sm62_local_screens_off()) display_turn_off();
-    else if (!is_keyboard_master()) display_turn_on();
     active_screen = SM62_SCREEN_CLOCK;
 #if SM62_FAST_RETURN
     display_ready_at = timer_read32();
@@ -92,16 +95,16 @@ void display_housekeeping_task(void) {
         return;
     }
     // Restores the saved brightness, including after a persistent night-mode off.
-    if (!screens_were_off && (!is_keyboard_master() || master_display_released)) display_turn_on();
+    if (!screens_were_off && startup_display_released) display_turn_on();
 
     /* A mode SET is already visible to GET. Keep the old view on-screen for
      * the short readback window, then paint the requested mode once. */
     if (mode_transition_pending) return;
 
-    if (is_keyboard_master() && !master_display_released &&
+    if (!startup_display_released &&
         sm62_display_boot_elapsed() >= SM62_DISPLAY_SYNC_DELAY_MS) {
         if (!screens_were_off) display_turn_on();
-        master_display_released = true;
+        startup_display_released = true;
     }
 
     const sm62_side_settings_t *settings = sm62_local_display_settings();
@@ -132,7 +135,7 @@ void display_housekeeping_task(void) {
     /* Idle/ORBIT is local too: split activity from the USB half must not
      * change the other half's visible screen. */
     } else if (settings->mode == 2 ||
-               (settings->ship_enabled && idle >= (uint32_t)settings->ship_timeout_s * 1000U)) {
+               (settings->ship_enabled && sm62_local_orbit_idle_ms(idle) >= (uint32_t)settings->ship_timeout_s * 1000U)) {
         requested = SM62_SCREEN_ORBIT;
     } else {
         requested = settings->mode == 1 ? SM62_SCREEN_PLAYER :
@@ -168,7 +171,7 @@ void display_housekeeping_task(void) {
         current_screen.load();
         if (screens_were_off) {
             display_refresh();
-            if (!is_keyboard_master() || master_display_released) display_turn_on();
+            if (startup_display_released) display_turn_on();
             screens_were_off = false;
         }
         return;
@@ -178,7 +181,7 @@ void display_housekeeping_task(void) {
         // its load callback releases an outstanding animation frame lease.
         current_screen.load();
         display_refresh();
-        if (!is_keyboard_master() || master_display_released) display_turn_on();
+        if (startup_display_released) display_turn_on();
         screens_were_off = false;
         return;
     }

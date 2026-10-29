@@ -4,6 +4,19 @@ import subprocess
 
 def validate_lvgl(lvgl):
     pinned = 'e19410f8f8a256609da72cff549598e0df6fa4cf'
+    from pathlib import Path
+    import json
+    fixture = Path(__file__).with_name('sm62-lvgl-blobs.json')
+    if fixture.exists():
+        manifest = json.loads(fixture.read_text())
+        assert manifest['revision'] == pinned
+        assert len(manifest['blobs']) == 606
+        for filename, oid in manifest['blobs'].items():
+            data = (lvgl/filename).read_bytes()
+            actual = hashlib.sha1(b'blob '+str(len(data)).encode()+b'\0'+data).hexdigest()
+            assert actual == oid, f'LVGL source differs from pinned blob: {filename}'
+        print('LVGL pinned source: 606 C/header blobs verified (frozen git tree inventory)', flush=True)
+        return
     tree = subprocess.check_output(['git', '-C', str(lvgl), 'ls-tree', '-rz', '--full-tree', pinned])
     checked = 0
     for entry in tree.split(b'\0'):
