@@ -314,7 +314,7 @@ static bool process_record_user(uint16_t k,keyrecord_t *r){(void)k;(void)r;retur
 bool process_record_kb(uint16_t keycode,keyrecord_t *record);
 '''
     fixtures = fixtures.replace('mo_down, mo_up, normal_down, normal_up', 'mo_down, mo_up')
-    fixtures = fixtures.replace('} else if (record->event.pressed) normal_down++;\n    else normal_up++;', '} else if (process_record_kb(record->keycode,record)) {\n        if(record->event.pressed) normal_down++; else normal_up++;\n    }')
+    fixtures = fixtures.replace('} else if (record->event.pressed) normal_down++;\n    else normal_up++;', '} else if (process_record_kb(record->keycode,record)) {\n        if(record->event.pressed) { down_code=record->keycode; normal_down++; if(record->keycode==MO(1)) layer_state|=2; } else { up_code=record->keycode; normal_up++; if(record->keycode==MO(1)) layer_state&=~2U; }\n    }')
     preamble = preamble.replace('pos.col == 0', 'pos.col == 5')
     tests = tests.replace('event(1,0,','event(0,5,').replace('event(1,1,','event(0,4,')
     # Macropad-only encoder selector has no SM62 equivalent; keep all key paths.

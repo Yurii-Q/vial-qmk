@@ -74,16 +74,17 @@ static void *selected_display=(void*)1;
 static void qp_viewport(void*d,int a,int b,int c,int e){(void)d;(void)a;(void)b;(void)c;(void)e;}
 static void qp_pixdata(void*d,void*p,uint32_t n){(void)d;(void)p;(void)n;}
 static void qp_flush(void*d){(void)d;}
+static bool slice_expired(void){return true;}
 '''
 main=r'''
 static unsigned checks;
 static void tick(uint32_t t){wall=t;now=clock_offset+wall;}
 static void set(unsigned q,uint8_t v){qmk_settings_proto_t p={q};assert(sm62_setting_set(&p,&v,1)==0);}
 static void expect(unsigned n,const char *why){display_housekeeping_task();checks++;if(sm62_diag_screen()!=n){fprintf(stderr,"FAIL %s wall=%u expected=%u actual=%u\n",why,wall,n,sm62_diag_screen());exit(1);}}
-static void render(void){lv_obj_invalidate(lv_scr_act());lv_tick_inc(32);lv_refr_now(NULL);}
+static void render(void){lv_obj_invalidate(lv_scr_act());lv_tick_inc(32);do{lv_refr_now(NULL);}while(lv_disp_refr_pending(NULL));}
 static void init(void){
  lv_init();static lv_disp_draw_buf_t buf;static lv_color_t colors[240*28];lv_disp_draw_buf_init(&buf,colors,0,240*28);
- static lv_disp_drv_t drv;lv_disp_drv_init(&drv);drv.hor_res=240;drv.ver_res=280;drv.draw_buf=&buf;drv.flush_cb=qp_lvgl_flush;lv_disp_drv_register(&drv);
+ static lv_disp_drv_t drv;lv_disp_drv_init(&drv);drv.hor_res=240;drv.ver_res=280;drv.draw_buf=&buf;drv.refr_slice_cb=slice_expired;drv.flush_cb=qp_lvgl_flush;lv_disp_drv_register(&drv);
  memset(eeprom,255,sizeof(eeprom));kb_settings_extra_init();sm62_settings_register_rpc();/* Persisted ordinary clock on both halves, idle disabled. */for(unsigned i=0;i<2;i++){saved.side[i].mode=0;saved.side[i].ship_enabled=0;saved.side[i].ship_timeout_s=20;}display_init_screens_kb();}
 int main(int argc,char**argv){
  assert(argc>=4);side=atoi(argv[2]);clock_offset=strtoul(argv[3],0,0);tick(0);init();
@@ -153,7 +154,7 @@ int main(int argc,char**argv){
 qp=(a.source/'quantum/painter/lvgl/qp_lvgl.c').read_text();start=qp.index('void qp_lvgl_flush(');end=qp.index('\nstatic uint32_t tick_task_callback',start);qp=qp[start:end]
 src=a.output/'orbit_idle.c';src.write_text(pre+stripped('quantum/sync_timer.c')+stripped('keyboards/ergohaven/sm62/sm62_settings.h')+stripped('keyboards/ergohaven/sm62/sm62_settings.c')+stripped('keyboards/ergohaven/sm62/display_modes.c')+qp+main)
 exe=a.output/'orbit_idle'
-subprocess.run(['gcc','-std=gnu11','-O1','-Wall','-Wextra','-Werror','-Wno-unused-function','-fsanitize=undefined','-fno-sanitize-recover=all','-DLV_CONF_SKIP','-DLV_USE_LOG=1','-DLV_USE_ASSERT_MALLOC=1','-I'+str(a.output/'stubs'),'-I'+str(lvgl),str(src),*sorted(str(f) for f in (lvgl/'src').rglob('*.c')),'-lm','-o',str(exe)],check=True)
+subprocess.run(['gcc','-include','/home/agent/.hermes/profiles/ben/cache/scratch/sm62-test16-final/firmware/quantum/sm62_trace.h','-std=gnu11','-O1','-Wall','-Wextra','-Werror','-Wno-unused-function','-fsanitize=undefined','-fno-sanitize-recover=all','-DLV_CONF_SKIP','-DLV_USE_COOPERATIVE_REFR=1','-DLV_USE_LOG=1','-DLV_USE_ASSERT_MALLOC=1','-I'+str(a.output/'stubs'),'-I'+str(lvgl),str(src),*sorted(str(f) for f in (lvgl/'src').rglob('*.c')),'-lm','-o',str(exe)],check=True)
 results=[]
 def run(args):
  r=subprocess.run([str(exe),*map(str,args)],capture_output=True,text=True);results.append({'args':list(map(str,args)),'exit':r.returncode,'output':r.stdout+r.stderr})

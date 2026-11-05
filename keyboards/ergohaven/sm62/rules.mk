@@ -56,6 +56,7 @@ SRC += keyboards/ergohaven/macropad/sm62_font_zen_regular_20.c
 SRC += sm62_settings.c
 SRC += application_display.c
 SRC += display_modes.c
+SRC += display_input.c
 SRC += screen_clock.c
 SRC += screen_player.c
 SRC += screen_keymap.c
@@ -64,3 +65,14 @@ SRC += keyboards/ergohaven/macropad/sm62_font_zen_regular_24.c
 SRC += keyboards/ergohaven/macropad/sm62_font_zen_bold_24.c
 SRC += player_fonts.c
 SRC += sm62_font_cjk_24.c
+
+SRC += vial_extension.c
+SRC += vial_extension_flash.c
+SRC += flash_gate.c
+SRC += flash_guard.c
+SRC += render_mailbox.c
+SRC += render_exchange.c
+SRC += render_owner.c
+SRC += dualcore_trace.c
+# Dedicated extension sectors precede the unchanged 16KiB QMK backing.
+LDFLAGS += -Wl,--defsym=FLASH_LEN=0x1fa000

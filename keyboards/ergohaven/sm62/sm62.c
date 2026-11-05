@@ -14,10 +14,18 @@
 #include "keymap_introspection.h"
 #include "transactions.h"
 #include "hid.h"
+#include "sm62_trace.h"
+#if defined(SM62_DUALCORE_RENDER)
+#    include "render_owner.h"
+#    include "dualcore_trace.h"
+#endif
 
 void kb_settings_layer_labels_init(void);
 #include <string.h>
 #include "fps_bridge.inc"
+#if defined(SM62_STAGE_TRACE) && !defined(SM62_DUALCORE_RENDER)
+#include "stage_trace.inc"
+#endif
 
 /* Physical handedness uses QMK's SPLIT_HAND_PIN implementation (GP29).
  * Do not override is_keyboard_left_impl: the same image serves both halves. */
@@ -51,6 +59,9 @@ static uint16_t diag_clip(uint32_t v) { return v > 65535U ? 65535U : (uint16_t)v
 static void diag_add(uint16_t *dst, uint32_t v) { *dst = diag_clip((uint32_t)*dst + v); }
 static void diag_max(uint16_t *dst, uint32_t v) { if (v > *dst) *dst = diag_clip(v); }
 void sm62_diag_stage(uint8_t stage) {
+#if defined(SM62_DUALCORE_RENDER)
+    if (sm62_render_is_owner()) return;
+#endif
     if (stage < 5 && diag_started) {
         uint32_t now = timer_read32();
         diag_stages[stage] = diag_clip(now - diag_epoch);
@@ -58,17 +69,33 @@ void sm62_diag_stage(uint8_t stage) {
     }
 }
 void sm62_diag_handler(uint32_t start) {
+#if defined(SM62_DUALCORE_RENDER)
+    if (sm62_render_is_owner()) return;
+#endif
     diag_bin_t *b = diag_current(); if (!b) return;
     uint32_t ms = timer_elapsed32(start);
     diag_add(&b->handlers, 1); diag_add(&b->handler_ms, ms); diag_max(&b->handler_max, ms);
 }
 void sm62_diag_flush(uint32_t start) {
+#if defined(SM62_DUALCORE_RENDER)
+    if (sm62_render_is_owner()) return;
+#endif
     diag_bin_t *b = diag_current(); if (!b) return;
     uint32_t ms = timer_elapsed32(start);
     diag_add(&b->flushes, 1); diag_add(&b->flush_ms, ms); diag_max(&b->flush_max, ms);
 }
-void sm62_diag_frame(void) { diag_bin_t *b=diag_current(); if (b) diag_add(&b->frames,1); if (!diag_stages[4]) sm62_diag_stage(4); }
-void sm62_diag_star(void) { diag_bin_t *b=diag_current(); if (b) diag_add(&b->star_steps,1); }
+void sm62_diag_frame(void) {
+#if defined(SM62_DUALCORE_RENDER)
+    if (sm62_render_is_owner()) return;
+#endif
+    diag_bin_t *b=diag_current(); if (b) diag_add(&b->frames,1); if (!diag_stages[4]) sm62_diag_stage(4);
+}
+void sm62_diag_star(void) {
+#if defined(SM62_DUALCORE_RENDER)
+    if (sm62_render_is_owner()) return;
+#endif
+    diag_bin_t *b=diag_current(); if (b) diag_add(&b->star_steps,1);
+}
 void sm62_diag_house(uint32_t start) {
     diag_bin_t *b=diag_current(); if (!b) return;
     diag_max(&b->house_max,timer_elapsed32(start));
@@ -81,6 +108,10 @@ static void diag_put32(uint8_t *p, uint32_t v) {
 }
 /* Diagnostic RPC is registered at boot, but only executed on host request. */
 static void sm62_diag_rpc(uint8_t in_len, const void *in, uint8_t out_len, void *out) {
+#if defined(SM62_DUALCORE_RENDER)
+    if (out && out_len>=8) { memset(out,0,out_len); ((uint8_t *)out)[0]=0xD7; ((uint8_t *)out)[1]=0x62; ((uint8_t *)out)[2]=0x18; ((uint8_t *)out)[7]=0xFE; }
+    return; /* old peer/master-only statistics are not dual-core measurements */
+#endif
     if (in_len) { (void)sm62_fps_rpc(in_len,in,out_len,out); return; }
     (void)in_len; (void)in;
     if (out_len != 32 || !out) return;
@@ -93,6 +124,12 @@ static void sm62_diag_rpc(uint8_t in_len, const void *in, uint8_t out_len, void 
     diag_put16(p+30,diag_clip(timer_read32()));
 }
 bool sm62_diag_raw(uint8_t *data, uint8_t length) {
+#if defined(SM62_DUALCORE_RENDER)
+    return sm62_dc_diag_raw(data,length);
+#endif
+#if defined(SM62_STAGE_TRACE) && !defined(SM62_DUALCORE_RENDER)
+    if(sm62_stage_raw(data,length)) return true;
+#endif
     if (sm62_fps_raw(data,length)) return true;
     if (length < 4 || data[0] != 0xD7 || data[1] != 0x62 || data[2] != 1) return false;
     uint8_t index=data[3], reply[32]={0};
@@ -123,19 +160,39 @@ bool sm62_diag_raw(uint8_t *data, uint8_t length) {
 void sm62_diag_house(uint32_t start);
 void sm62_diag_stage(uint8_t stage);
 void housekeeping_task_user(void) {
+    sm62_trace_count(13);
+    sm62_trace_edge(7,true);
     sm62_fps_tick();
     uint32_t start=timer_read32();
+    sm62_trace_edge(9,true);
     sm62_settings_sync_task();
+    sm62_trace_edge(9,false);
     uint32_t app_start=timer_read32();
+    sm62_trace_edge(8,true);
     hid_app_layout_split_task();
+    sm62_trace_edge(8,false);
     fps_duration(&fps_data,app_start,timer_read32(),24);
+#if defined(SM62_DUALCORE_RENDER)
+    hid_housekeeping_task();
+    sm62_render_capture();
+#else
     display_housekeeping_task();
+#endif
     sm62_diag_house(start);
+    sm62_trace_edge(7,false);
 }
 
-/* Update only recognized old factory defaults in existing EEPROM.
- * User-customized values are left untouched. New/reset EEPROM uses the defaults. */
+/* Compatible upgrades only reload native names. The historical heuristic
+ * migration remains available solely outside the preservation policy. */
 static void sm62_migrate_factory_defaults(void) {
+#ifdef SM62_PRESERVE_LEGACY_DEFAULT
+    /* Legacy-looking values can be intentional user settings. Compatible
+     * upgrades must not guess their provenance or write EEPROM at boot.
+     * Fresh/reset initialization already installs current factory defaults.
+     * Keep the native label cache populated without migrating stored bytes. */
+    kb_settings_layer_labels_init();
+    layer_name_updated = true;
+#else
     char old_label[LAYER_LABEL_SIZE];
     for (uint8_t layer = 2; layer < 16; ++layer) {
         snprintf(old_label, sizeof(old_label), "LAYER %u", layer);
@@ -206,6 +263,7 @@ static void sm62_migrate_factory_defaults(void) {
         }
         if (factory_main) dynamic_keymap_set_keycode(0, 4, 0, MO(1));
     }
+#endif
 }
 
 void keyboard_pre_init_user(void) { diag_absolute[0]=timer_read32(); }
@@ -215,7 +273,11 @@ uint32_t sm62_display_boot_elapsed(void) { return timer_elapsed32(diag_absolute[
 void keyboard_post_init_user(void) {
     sm62_migrate_factory_defaults();
     diag_epoch=timer_read32(); diag_started=true; sm62_diag_stage(0);
+#if defined(SM62_DUALCORE_RENDER)
+    sm62_render_ready();
+#else
     display_init_kb();
+#endif
     sm62_diag_stage(3);
     transaction_register_rpc(RPC_SM62_DIAG,sm62_diag_rpc);
     sm62_settings_register_rpc();

@@ -11,11 +11,17 @@ def validate_lvgl(lvgl):
         manifest = json.loads(fixture.read_text())
         assert manifest['revision'] == pinned
         assert len(manifest['blobs']) == 606
+        overlay_path = fixture.with_name('sm62-lvgl-cooperative-blobs.json')
+        overlay = json.loads(overlay_path.read_text()) if overlay_path.exists() else {}
+        assert not overlay or set(overlay) == {'src/core/lv_refr.c', 'src/core/lv_refr.h', 'src/hal/lv_hal_disp.c', 'src/hal/lv_hal_disp.h', 'src/misc/lv_timer.c'}
         for filename, oid in manifest['blobs'].items():
+            if filename in overlay:
+                assert overlay[filename]['base'] == oid
+                oid = overlay[filename]['patched']
             data = (lvgl/filename).read_bytes()
             actual = hashlib.sha1(b'blob '+str(len(data)).encode()+b'\0'+data).hexdigest()
             assert actual == oid, f'LVGL source differs from pinned blob: {filename}'
-        print('LVGL pinned source: 606 C/header blobs verified (frozen git tree inventory)', flush=True)
+        print('LVGL source: 606 C/header blobs verified (pinned base' + (' + exact 5-file cooperative/cache overlay)' if overlay else ')'), flush=True)
         return
     tree = subprocess.check_output(['git', '-C', str(lvgl), 'ls-tree', '-rz', '--full-tree', pinned])
     checked = 0

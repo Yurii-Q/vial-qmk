@@ -11,11 +11,14 @@ endif
 # Raspberry Pi Pico SDK Support
 ##############################################################################
 ADEFS  += -DCRT0_VTOR_INIT=1 \
-		  -DCRT0_EXTRA_CORES_NUMBER=0 \
+		  -DCRT0_EXTRA_CORES_NUMBER=$(if $(filter ergohaven/sm62,$(KEYBOARD)),1,0) \
           -DCRT0_INIT_VECTORS=1
 
 CFLAGS += -DPICO_NO_FPGA_CHECK \
           -DNDEBUG
+ifeq ($(strip $(KEYBOARD)),ergohaven/sm62)
+    CFLAGS += -DCRT0_EXTRA_CORES_NUMBER=1
+endif
 
 #
 # Pico SDK source and header files needed by QMK and ChibiOS

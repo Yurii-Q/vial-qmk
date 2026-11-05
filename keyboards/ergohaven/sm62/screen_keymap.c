@@ -1,6 +1,7 @@
 // Copyright 2026 Ergohaven
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "keyboards/ergohaven/sm62/render_alias.h"
 #include <lvgl.h>
 #include "application_display.h"
 #include "application_geometry.h"
@@ -980,6 +981,38 @@ static void refresh_grid(bool left, uint8_t layer, bool content_refresh) {
 #endif
 }
 
+/* Main-loop capture only: never move or invalidate LVGL objects from input.
+ * Retain the last real local matrix press even if release precedes the next
+ * housekeeping. No fabricated Combo/Tap-Dance/magic-row event reaches here. */
+static struct {
+    bool pending, released;
+    uint8_t row, col, layer;
+    uint32_t pressed_at, released_at;
+} captured_press;
+
+#if defined(SM62_DUALCORE_RENDER)
+static bool dc_feedback_pending;
+static void dc_keymap_owner_event(uint8_t row, uint8_t col, bool pressed) {
+#else
+void display_process_keyevent(uint8_t row, uint8_t col, bool pressed) {
+#endif
+    if (row >= MATRIX_ROWS || col >= MATRIX_COLS) return;
+    bool left = is_keyboard_left();
+    if ((row < MATRIX_ROWS / 2) != left) return;
+    row %= MATRIX_ROWS / 2;
+    if (pressed) {
+        captured_press.row = row;
+        captured_press.col = col;
+        captured_press.layer = get_current_layer();
+        captured_press.pressed_at = timer_read32();
+        captured_press.pending = true;
+        captured_press.released = false;
+    } else if (captured_press.pending && captured_press.row == row && captured_press.col == col) {
+        captured_press.released = true;
+        captured_press.released_at = timer_read32();
+    }
+}
+
 static bool scan_keys(bool left) {
     bool changed = false;
     for (uint8_t row = 0; row < 5; ++row) {
@@ -1022,9 +1055,60 @@ static bool scan_keys(bool left) {
  * must not disappear while LVGL is drawing the previous screen. */
 bool sm62_keymap_observe_matrix(void) {
     bool changed = scan_keys(is_keyboard_left());
+#if defined(SM62_DUALCORE_RENDER)
+    changed |= dc_feedback_pending;
+    dc_feedback_pending = false;
+#endif
+    if (captured_press.pending) {
+        bool left = is_keyboard_left();
+        uint8_t row = captured_press.row, col = captured_press.col;
+        recent_press_valid = true;
+        recent_press_row = row;
+        recent_press_col = col;
+        if (focus_next_press_after_layer_change && !keycode_is_layer_switch(sm62_effective_keycode(captured_press.layer, global_row(left, row), col))) {
+            focus_top_center_on_key(left, row, col);
+            focus_next_press_after_layer_change = false;
+        } else {
+            keep_key_visible(left, row, col);
+        }
+        if (captured_press.released) {
+            released_fading[row][col] = true;
+            released_at[row][col] = captured_press.released_at;
+            fade_frame_timer = captured_press.released_at;
+        }
+        captured_press.pending = false;
+        changed = true;
+    }
     pending_matrix_change |= changed;
     return changed;
 }
+
+#if defined(SM62_DUALCORE_RENDER)
+void sm62_keymap_owner_feedback(uint64_t presses, uint64_t releases, bool last, uint8_t row, uint8_t col) {
+    if (!(presses | releases)) return;
+    uint32_t visible_at = timer_read32();
+    for (uint8_t r=0;r<5;r++) for (uint8_t c=0;c<7;c++) {
+        uint64_t bit=UINT64_C(1)<<(r*7U+c);
+        if (presses & bit) {
+            released_fading[r][c]=false;
+#if SM62_EFFECT > 0
+            effect_start(r,c);
+#endif
+        }
+        if ((releases & bit) && !matrix_is_on(global_row(is_keyboard_left(),r),c)) {
+            /* Visual presentation time only; native debounce/TD is untouched. */
+            released_fading[r][c]=true;
+            released_at[r][c]=visible_at;
+            fade_frame_timer=visible_at;
+        }
+    }
+    if (last) {
+        dc_keymap_owner_event(row,col,true);
+        if (!matrix_is_on(row,col)) dc_keymap_owner_event(row,col,false);
+    }
+    dc_feedback_pending=true;
+}
+#endif
 
 static void screen_keymap_init(void) {
     screen_keymap = display_view_create();

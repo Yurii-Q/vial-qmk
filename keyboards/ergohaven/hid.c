@@ -1,4 +1,5 @@
 #include "hid.h"
+#include "sm62_trace.h"
 #include <string.h>
 #include "via.h"
 #include "raw_hid.h"
@@ -247,6 +248,28 @@ void hid_app_layout_task(void) {
     if (app_layout_staging.valid && timer_elapsed32(app_layout_staging_time) >= EH_APP_LAYOUT_TIMEOUT_MS) app_layout_staging.valid = false;
 #endif
 }
+
+#ifdef SM62_RAW_HID_FRAME_GATE
+/* Only this parser-owned, write-only RAM family is safe while pixels are in
+ * flight. Wrong versions and E6 replies retain the ordinary FIFO path. */
+bool hid_app_layout_packet_safe_during_refresh(const uint8_t *data, uint8_t length) {
+    if (length != 32 || data[1] != EH_APP_LAYOUT_PROTOCOL_VERSION) return false;
+    switch (data[0]) {
+        case EH_APP_LAYOUT_BEGIN:
+        case EH_APP_LAYOUT_KEYCODES:
+        case EH_APP_LAYOUT_VISUALS:
+        case EH_APP_LAYOUT_LAYER_NAME:
+        case EH_APP_LAYOUT_ENCODER_STACK:
+        case EH_APP_LAYOUT_COMMIT:
+        case EH_APP_LAYOUT_KEEPALIVE:
+        case EH_APP_LAYOUT_DEACTIVATE:
+        case EH_APP_LAYOUT_EXECUTION_STATE:
+            return true;
+        default:
+            return false;
+    }
+}
+#endif
 
 bool hid_app_layout_process_packet(uint8_t *data, uint8_t length) {
     if (length < 2 || data[1] != EH_APP_LAYOUT_PROTOCOL_VERSION) return false;
@@ -569,9 +592,11 @@ bool hid_app_layout_process_keyevent(uint8_t row, uint8_t col, bool pressed) {
 }
 
 #if defined(KEYBOARD_ergohaven_sm62)
-/* Combo's delayed replay bypasses pre_process_record_kb. Use the immutable
- * explicit override stored in the record, not today's active map. Zero means
- * this press belongs to QMK's ordinary fallback/cache, even after activation. */
+/* Combo's delayed replay bypasses pre_process_record_kb. The record already
+ * owns its press-time keycode; only publish receipt here, then let the normal
+ * QMK processors handle both edges (including Key Override and Tap Dance).
+ * Do not populate app_layout_held: that direct-injection ledger is Macropad's,
+ * and releasing it on a layout transition would bypass those processors. */
 void hid_app_layout_capture_identity(uint32_t *revision, uint8_t *layer) {
     *revision = app_layout_revision;
     *layer = app_layout_current_layer();
@@ -579,25 +604,12 @@ void hid_app_layout_capture_identity(uint32_t *revision, uint8_t *layer) {
 
 bool hid_app_layout_process_cached_keyevent(uint8_t row, uint8_t col, bool pressed, uint16_t keycode, uint32_t revision, uint8_t layer) {
     uint8_t control;
-    if (!app_layout_control_for_position(row, col, &control)) return false;
-    if (!pressed) {
-        if (app_layout_held[control] != KC_NO) {
-            vial_keycode_up(app_layout_held[control]);
-            app_layout_held[control] = KC_NO;
-            return true;
-        }
-        return keycode != 0;
+    if (pressed && keycode != 0 && app_layout_control_for_position(row, col, &control)) {
+        // A buffered press still belongs to its original snapshot. Publish
+        // before downstream handlers, which can synchronously change layers.
+        app_layout_enqueue_event(revision, layer, control);
     }
-    if (keycode == 0) return false;
-    // Receipt belongs to the press's snapshot, even if it is now stale. The
-    // host revision fence may discard it; never attribute it to a new profile.
-    // Queue before Vial dispatch, which can synchronously change layers.
-    app_layout_enqueue_event(revision, layer, control);
-    if (keycode != UINT16_MAX && keycode != KC_NO) {
-        vial_keycode_down(keycode);
-        app_layout_held[control] = keycode;
-    }
-    return true;
+    return false; // Never consume the QMK record or inject a second key event.
 }
 #endif
 
@@ -668,12 +680,24 @@ bool is_hid_volume_active(void) {
 }
 
 #if defined(KEYBOARD_ergohaven_sm62)
+#    ifdef PROTOCOL_CHIBIOS
+#        include "ch.h"
+#        define HID_STATE_LOCK() chSysLock()
+#        define HID_STATE_UNLOCK() chSysUnlock()
+#    else
+#        define HID_STATE_LOCK() ((void)0)
+#        define HID_STATE_UNLOCK() ((void)0)
+#    endif
 void hid_housekeeping_task(void) {
 #if defined(SM62_DEFER_HID_RELAY)
     sm62_hid_relay_task();
 #endif
+    /* Check and expire atomically with respect to the serial receiver. The
+     * relay above may block; never include transport in this critical section. */
+    HID_STATE_LOCK();
     if (is_hid_active()) {
         sm62_timeout_cleared = false;
+        HID_STATE_UNLOCK();
         return;
     }
 
@@ -685,6 +709,7 @@ void hid_housekeeping_task(void) {
         hid_data.hid_changed = true;
     }
     sm62_timeout_cleared = true;
+    HID_STATE_UNLOCK();
 }
 #endif
 
@@ -717,9 +742,11 @@ static char sm62_title_staging[256];
 static uint8_t sm62_title_total, sm62_title_received;
 #endif
 
-void read_string(uint8_t *data, char *string_data) {
-    uint8_t data_length = MIN(31, data[1]);
-    memcpy(string_data, data + 2, data_length);
+void read_string(uint8_t *data, uint8_t length, char *string_data) {
+    /* Both legacy text destinations hold 31 bytes plus NUL. The source is
+     * only the logical report, which can be shorter than its backing array. */
+    uint8_t data_length = length >= 2 ? MIN(MIN(31, data[1]), length - 2U) : 0;
+    if (data_length) memcpy(string_data, data + 2, data_length);
     string_data[data_length] = '\0';
 }
 
@@ -737,6 +764,7 @@ bool process_raw_hid_data(uint8_t *data, uint8_t length) {
     switch (data_type) {
 #if defined(KEYBOARD_ergohaven_sm62)
         case _TIME:
+            if (length < 3) break;
             hid_data.hours        = data[1];
             hid_data.minutes      = data[2];
             hid_data.time_changed = true;
@@ -828,7 +856,7 @@ bool process_raw_hid_data(uint8_t *data, uint8_t length) {
 
 #endif
         case _MEDIA_ARTIST:
-            read_string(data, hid_data.media_artist);
+            read_string(data, length, hid_data.media_artist);
             hid_data.media_artist_changed = true;
             new_hid_data                  = true;
             break;
@@ -842,7 +870,7 @@ bool process_raw_hid_data(uint8_t *data, uint8_t length) {
                 hid_data.media_title[bytes] = '\0';
             }
 #else
-            read_string(data, hid_data.media_title);
+            read_string(data, length, hid_data.media_title);
 #endif
             hid_data.media_title_changed = true;
             new_hid_data                 = true;
@@ -919,6 +947,7 @@ bool process_raw_hid_data(uint8_t *data, uint8_t length) {
 
 #endif
         case _RELAY_TO_DEVICE:
+            if (length < 3) break;
             switch (data[1]) {
                 case _POINTING:
                     set_pointing_mode_from_hid(data[2]);

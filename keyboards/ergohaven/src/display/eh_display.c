@@ -1,3 +1,4 @@
+#include "keyboards/ergohaven/sm62/render_alias.h"
 #include "eh_display.h"
 #include "gpio.h"
 #include "hid.h"
@@ -33,6 +34,9 @@ __attribute__((weak)) void display_diag_mark(uint32_t stage) {
 }
 
 bool is_display_enabled(void) {
+#if defined(SM62_DUALCORE_RENDER)
+    if (!sm62_render_is_owner()) return sm62_render_enabled();
+#endif
     return display_enabled;
 }
 
@@ -65,6 +69,9 @@ __attribute__((weak)) void display_button_style_changed_kb(uint8_t style) {
 __attribute__((weak)) void display_clock_settings_changed_kb(void) {}
 
 void display_apply_accent_color(uint8_t red, uint8_t green, uint8_t blue) {
+#if defined(SM62_DUALCORE_RENDER)
+    if (!sm62_render_is_owner()) { sm62_render_style(1,red,green,blue); return; }
+#endif
     accent_color_blue = lv_color_make(red, green, blue);
     if (!display_enabled) return;
 
@@ -74,6 +81,9 @@ void display_apply_accent_color(uint8_t red, uint8_t green, uint8_t blue) {
 }
 
 void display_apply_background_color(uint8_t red, uint8_t green, uint8_t blue) {
+#if defined(SM62_DUALCORE_RENDER)
+    if (!sm62_render_is_owner()) { sm62_render_style(2,red,green,blue); return; }
+#endif
     display_background_color = lv_color_make(red, green, blue);
     if (!display_enabled) return;
 
@@ -89,17 +99,26 @@ void display_apply_background_color(uint8_t red, uint8_t green, uint8_t blue) {
 }
 
 void display_apply_brightness(void) {
+#if defined(SM62_DUALCORE_RENDER)
+    if (!sm62_render_is_owner()) { sm62_render_style(16,0,0,0); return; }
+#endif
     if (display_enabled && is_display_on) {
         backlight_level_noeeprom(get_split_lcd_brightness());
     }
 }
 
 void display_apply_button_style(uint8_t style) {
+#if defined(SM62_DUALCORE_RENDER)
+    if (!sm62_render_is_owner()) { sm62_render_style(4,style,0,0); return; }
+#endif
     if (!display_enabled) return;
     display_button_style_changed_kb(style);
 }
 
 void display_apply_clock_settings(void) {
+#if defined(SM62_DUALCORE_RENDER)
+    if (!sm62_render_is_owner()) { sm62_render_style(8,0,0,0); return; }
+#endif
     if (!display_enabled) return;
     display_clock_settings_changed_kb();
 }
@@ -147,6 +166,9 @@ void display_show_view(lv_obj_t *view) {
 }
 
 void display_refresh(void) {
+#if defined(SM62_DUALCORE_RENDER)
+    if (!sm62_render_is_owner()) { sm62_render_style(32,0,0,0); return; }
+#endif
     if (display_root) lv_obj_invalidate(display_root);
 }
 
@@ -211,6 +233,9 @@ extern void sm62_diag_stage(uint8_t stage);
 
 #if defined(KEYBOARD_ergohaven_sm62)
 bool display_init_kb(void) {
+#if defined(SM62_DUALCORE_RENDER)
+    if (!sm62_render_is_owner()) return sm62_render_enabled();
+#endif
     /* Five total attempts, one per housekeeping deadline; never reset an
      * already initialized painter or allocate another registered device. */
     static uint8_t attempts;
@@ -325,7 +350,14 @@ static void sm62_request_display_power(bool on) {
 
 #if defined(KEYBOARD_ergohaven_sm62)
 void display_turn_on(void) {
+#if defined(SM62_DUALCORE_RENDER)
+    if (!sm62_render_is_owner()) { sm62_render_suspend(false); return; }
+#endif
+#if defined(SM62_DUALCORE_RENDER)
+    if (sm62_view_off()) { display_turn_off(); return; }
+#else
     if (!display_user_enabled_kb()) { display_turn_off(); return; }
+#endif
     sm62_request_display_power(true);
 }
 #else
@@ -342,6 +374,9 @@ void display_turn_on(void) {
 
 #if defined(KEYBOARD_ergohaven_sm62)
 void display_turn_off(void) {
+#if defined(SM62_DUALCORE_RENDER)
+    if (!sm62_render_is_owner()) { sm62_render_suspend(true); return; }
+#endif
     sm62_request_display_power(false);
 }
 #else

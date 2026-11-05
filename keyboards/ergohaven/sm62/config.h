@@ -1,6 +1,19 @@
 // Copyright 2026 Ergohaven
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
+#define SM62_DUALCORE_RENDER 1
+#define SM62_STAGE_TRACE 1
+/* 960 RGB565 pixels/1920 bytes per full-width strip. CPU render and native
+ * service costs remain additional, explicitly unqualified physical budgets. */
+#define QP_LVGL_BUFFER_ROWS 28
+/* Yield only after a complete LVGL part; ordinary owner loop handles HID. */
+#define LV_USE_COOPERATIVE_REFR 1
+#define QP_LVGL_SLICE_MS 4
+/* One bus/DMA acquisition per complete part; retain operation CS edges. */
+#define QP_LVGL_SPI_TRANSACTION
+/* Core housekeeping_task owns the sole user dispatch, after the kb hook. */
+#define SM62_SINGLE_USER_HOUSEKEEPING
+#define SM62_RAW_HID_FRAME_GATE
 
 #define BOOTMAGIC_LITE_ROW          1
 #define BOOTMAGIC_LITE_COLUMN       5
@@ -42,6 +55,11 @@
 #define TAP_CODE_DELAY 1
 #define EH_HAS_DISPLAY
 #define EH_SHORT_PRODUCT_NAME "SM62"
-#define VIAL_TAP_DANCE_ENTRIES 4
-#define VIAL_COMBO_ENTRIES 4
-#define VIAL_KEY_OVERRIDE_ENTRIES 4
+// This candidate retains the exact legacy EEPROM format across rebuilds.
+#define SM62_PRESERVE_LEGACY_DEFAULT
+#define VIAL_TAP_DANCE_ENTRIES 32
+#define VIAL_COMBO_ENTRIES 32
+#define VIAL_KEY_OVERRIDE_ENTRIES 32
+
+// Keep all historical addresses/macro bytes; extra slots use reserved flash.
+#define SM62_VIAL_LEGACY_EXTENSION

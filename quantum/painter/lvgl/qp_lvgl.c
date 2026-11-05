@@ -6,6 +6,14 @@
 #include "timer.h"
 #include "deferred_exec.h"
 #include "lvgl.h"
+#include "sm62_trace.h"
+#ifdef QP_LVGL_SPI_TRANSACTION
+#    include "qp_comms_spi.h"
+/* Aggregate transport failures until the frame is drained. Keep producer
+ * leases held until a wholly successful repaint, never a fake completion. */
+static bool qp_lvgl_frame_failed;
+static bool qp_lvgl_retry_frame;
+#endif
 
 typedef struct lvgl_state_t {
     uint8_t        fnc_id; // Ideally this should be the pointer of the function to run
@@ -18,6 +26,25 @@ static lvgl_state_t        lvgl_states[2]    = {0}; // For lv_tick_inc and lv_ta
 
 painter_device_t selected_display = NULL;
 void *           color_buffer     = NULL;
+
+#ifdef LV_USE_COOPERATIVE_REFR
+static lv_disp_t *qp_lvgl_display;
+/* Validate membership before dereference: a caller may remove the LVGL display
+ * between slices. Default-display changes must not transfer QP ownership. */
+static lv_disp_t *qp_lvgl_owned_display(void) {
+    lv_disp_t *d=NULL;
+    while((d=lv_disp_get_next(d))) if(d==qp_lvgl_display) return d;
+    return NULL;
+}
+static uint32_t slice_started;
+static bool qp_lvgl_slice_expired(void) {
+    return timer_elapsed32(slice_started) >= QP_LVGL_SLICE_MS;
+}
+bool qp_lvgl_refr_pending(void) {
+    lv_disp_t *d=qp_lvgl_owned_display();
+    return selected_display && d && lv_disp_refr_pending(d);
+}
+#endif
 
 #ifndef QP_LVGL_BUFFER_DIVISOR
 #    define QP_LVGL_BUFFER_DIVISOR 10
@@ -32,18 +59,62 @@ void *           color_buffer     = NULL;
 
 /* Boards may release frame leases only once the final LVGL strip is sent. */
 __attribute__((weak)) void display_frame_completed(void) {}
+/* Each QP operation has returned with comms stopped/CS high and bus released.
+ * Never invoke this from a comms transmit chunk while SPI is acquired. */
+__attribute__((weak)) void qp_lvgl_flush_input_service(void) {}
 
 void qp_lvgl_flush(lv_disp_drv_t *disp, const lv_area_t *area, lv_color_t *color_p) {
+#ifdef QP_LVGL_SPI_TRANSACTION
+    painter_device_t device = selected_display;
+    bool ok = false;
+    if (device && qp_comms_spi_transaction_begin(device)) {
+        uint32_t number_pixels = (area->x2 - area->x1 + 1) * (area->y2 - area->y1 + 1);
+        sm62_trace_panel(0,true);
+        ok = qp_viewport(device, area->x1, area->y1, area->x2, area->y2);
+        sm62_trace_panel(0,false);
+        if (ok) {
+            sm62_trace_panel(1,true);
+            ok = qp_pixdata(device, (void *)color_p, number_pixels);
+            sm62_trace_panel(1,false);
+        }
+        if (ok) {
+            sm62_trace_panel(2,true);
+            ok = qp_flush(device);
+            sm62_trace_panel(2,false);
+        }
+        /* End even after an operation fails. No callback/yield/input service
+         * is permitted before this synchronous bus/DMA release. */
+        bool ended = qp_comms_spi_transaction_end(device);
+        ok = ok && ended;
+    }
+    qp_lvgl_frame_failed |= !ok;
+    if (lv_disp_flush_is_last(disp)) {
+        qp_lvgl_retry_frame = device && qp_lvgl_frame_failed;
+        if (!qp_lvgl_frame_failed) display_frame_completed();
+        qp_lvgl_frame_failed = false;
+    }
+    lv_disp_flush_ready(disp);
+#else
     if (selected_display) {
         uint32_t number_pixels = (area->x2 - area->x1 + 1) * (area->y2 - area->y1 + 1);
+        sm62_trace_panel(0,true);
         qp_viewport(selected_display, area->x1, area->y1, area->x2, area->y2);
+        sm62_trace_panel(0,false);
+        sm62_trace_panel(1,true);
         qp_pixdata(selected_display, (void *)color_p, number_pixels);
+        sm62_trace_panel(1,false);
+        sm62_trace_panel(2,true);
         qp_flush(selected_display);
+        sm62_trace_panel(2,false);
+#ifndef LV_USE_COOPERATIVE_REFR
+        qp_lvgl_flush_input_service();
+#endif
         if (lv_disp_flush_is_last(disp)) {
             display_frame_completed();
         }
         lv_disp_flush_ready(disp);
     }
+#endif
 }
 
 static uint32_t tick_task_callback(uint32_t trigger_time, void *cb_arg) {
@@ -111,7 +182,11 @@ bool qp_lvgl_attach(painter_device_t device) {
     static lv_disp_draw_buf_t draw_buf;
     // A small strip is the conservative default. Displays with enough RAM can
     // request a complete frame to avoid exposing strip-by-strip redraws.
-    const size_t count_required   = driver->panel_width * driver->panel_height / QP_LVGL_BUFFER_DIVISOR;
+#ifdef QP_LVGL_BUFFER_ROWS
+    const size_t count_required = driver->panel_width * QP_LVGL_BUFFER_ROWS;
+#else
+    const size_t count_required = driver->panel_width * driver->panel_height / QP_LVGL_BUFFER_DIVISOR;
+#endif
     void *       new_color_buffer = realloc(color_buffer, sizeof(lv_color_t) * count_required);
     if (!new_color_buffer) {
         qp_dprintf("qp_lvgl_attach: fail (could not set up memory buffer)\n");
@@ -132,10 +207,17 @@ bool qp_lvgl_attach(painter_device_t device) {
     static lv_disp_drv_t disp_drv;     /*Descriptor of a display driver*/
     lv_disp_drv_init(&disp_drv);       /*Basic initialization*/
     disp_drv.flush_cb = qp_lvgl_flush; /*Set your driver function*/
+#ifdef LV_USE_COOPERATIVE_REFR
+    disp_drv.refr_slice_cb = qp_lvgl_slice_expired;
+#endif
     disp_drv.draw_buf = &draw_buf;     /*Assign the buffer to the display*/
     disp_drv.hor_res  = panel_width;   /*Set the horizontal resolution of the display*/
     disp_drv.ver_res  = panel_height;  /*Set the vertical resolution of the display*/
+#ifdef LV_USE_COOPERATIVE_REFR
+    qp_lvgl_display = lv_disp_drv_register(&disp_drv);
+#else
     lv_disp_drv_register(&disp_drv);   /*Finally register the driver*/
+#endif
 
     return true;
 }
@@ -144,6 +226,11 @@ bool qp_lvgl_attach(painter_device_t device) {
 // Quantum Painter LVGL Integration API: qp_lvgl_detach
 
 void qp_lvgl_detach(void) {
+#ifdef LV_USE_COOPERATIVE_REFR
+    lv_disp_t *owned=qp_lvgl_owned_display();
+    if(owned && lv_disp_refr_pending(owned)) lv_disp_refr_abort(owned);
+    qp_lvgl_display=NULL;
+#endif
     for (int i = 0; i < 2; ++i) {
         cancel_deferred_exec_advanced(lvgl_executors, 2, lvgl_states[i].defer_token);
     }
@@ -152,12 +239,42 @@ void qp_lvgl_detach(void) {
         color_buffer = NULL;
     }
     selected_display = NULL;
+#ifdef QP_LVGL_SPI_TRANSACTION
+    /* A detached/aborted frame cannot poison the next attachment. */
+    qp_lvgl_frame_failed = false;
+    qp_lvgl_retry_frame = false;
+#endif
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Quantum Painter LVGL Integration Internal: qp_lvgl_internal_tick
 
 void qp_lvgl_internal_tick(void) {
+#ifdef LV_USE_COOPERATIVE_REFR
+    slice_started = timer_read32();
+    if (qp_lvgl_refr_pending()) {
+        /* Continue immediately, not once per refresh/animation timer period. */
+        lv_refr_now(qp_lvgl_owned_display());
+        return;
+    }
+#    ifdef QP_LVGL_SPI_TRANSACTION
+    if (qp_lvgl_retry_frame) {
+        lv_disp_t *d = qp_lvgl_owned_display();
+        if (selected_display && d) {
+            /* Only after the failed refresh has fully drained: redraw the
+             * current view without releasing or mutating producer leases.
+             * One ordinary tick starts at most one sliced attempt; never
+             * retry synchronously from flush or loop until transport heals.
+             * Repaint the whole view, since later dirty areas need not cover
+             * pixels lost to a partial command/data transfer. */
+            qp_lvgl_retry_frame = false;
+            lv_obj_invalidate(lv_disp_get_scr_act(d));
+            lv_refr_now(d);
+            return;
+        }
+    }
+#    endif
+#endif
     static uint32_t last_lvgl_exec = 0;
     deferred_exec_advanced_task(lvgl_executors, 2, &last_lvgl_exec);
 }

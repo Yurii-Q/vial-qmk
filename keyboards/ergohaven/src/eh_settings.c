@@ -274,8 +274,13 @@ void kb_settings_layer_labels_reset(void) {
 }
 
 void kb_settings_layer_labels_init(void) {
-    for (int i = 0; i < DYNAMIC_KEYMAP_LAYER_COUNT; ++i)
+    for (int i = 0; i < DYNAMIC_KEYMAP_LAYER_COUNT; ++i) {
         eeconfig_read_kb_datablock(layer_names[i], KB_SETTINGS_LAYER_LABELS_OFFSET + i * LAYER_LABEL_SIZE, LAYER_LABEL_SIZE);
+        /* Native records are 16-byte C strings (15 text bytes + NUL), unlike
+         * the independent 22-byte application names. Corrupt storage must not
+         * bleed into the next row/render snapshot. Sanitize RAM only. */
+        layer_names[i][LAYER_LABEL_SIZE - 1] = '\0';
+    }
 }
 
 void kb_settings_reset(void) {
@@ -414,8 +419,17 @@ bool layer_name_updated = false;
 static int layer_name_set(const qmk_settings_proto_t *proto, const void *setting, size_t maxsz) {
     int layer = proto->qsid - 200;
     if (layer < 0 || layer >= DYNAMIC_KEYMAP_LAYER_COUNT) return -1;
-    dprintf("layer_name_set %d %s\n", layer, (const char *)setting);
-    snprintf(layer_names[layer], sizeof(layer_names[layer]), (const char *)setting);
+    /* Native names are literal bytes: read only the supplied source extent
+     * and retain the existing 15-byte text limit, independent of app names. */
+    const char *name = setting;
+    size_t len = 0;
+    while (len < maxsz && len < sizeof(layer_names[layer]) - 1 && name[len] != '\0') {
+        layer_names[layer][len] = name[len];
+        ++len;
+    }
+    layer_names[layer][len] = '\0';
+    /* Log the terminated native copy, never an unbounded host payload. */
+    dprintf("layer_name_set %d %s\n", layer, layer_names[layer]);
     eeconfig_update_kb_datablock(layer_names[layer], KB_SETTINGS_LAYER_LABELS_OFFSET + LAYER_LABEL_SIZE * layer, LAYER_LABEL_SIZE);
     layer_name_updated = true;
     return 0;

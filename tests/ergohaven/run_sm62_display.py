@@ -41,6 +41,7 @@ pre=r'''
 #define ARRAY_SIZE(x) (sizeof(x)/sizeof((x)[0]))
 #define LAYER_LABEL_SIZE 16
 #define MATRIX_ROWS 10
+#define MATRIX_COLS 7
 #define KB_SETTINGS_SM62_SIZE 18
 #define KB_SETTINGS_LCD_SIZE 3
 #define KB_SETTINGS_SM62_OFFSET 0
@@ -109,13 +110,14 @@ static painter_device_t selected_display=(void*)1;
 static void qp_viewport(void*d,int a,int b,int c,int e){(void)d;(void)a;(void)b;(void)c;(void)e;}
 static void qp_pixdata(void*d,void*p,uint32_t n){(void)d;(void)p;pixels+=n;}
 static void qp_flush(void*d){(void)d;flushes++;}
+static bool slice_expired(void){return true;}
 '''
 test=r'''
-static void render(void){lv_tick_inc(32);lv_refr_now(NULL);}
+static void render(void){lv_tick_inc(32);do{lv_refr_now(NULL);}while(lv_disp_refr_pending(NULL));}
 static void setup(void){
  fps_arm(&frame_measurement,now,42,0,0);
  defaults();lv_init();static lv_disp_draw_buf_t buf;static lv_color_t colors[240*28];lv_disp_draw_buf_init(&buf,colors,0,240*28);
- static lv_disp_drv_t drv;lv_disp_drv_init(&drv);drv.hor_res=240;drv.ver_res=280;drv.draw_buf=&buf;drv.flush_cb=qp_lvgl_flush;lv_disp_drv_register(&drv);
+ static lv_disp_drv_t drv;lv_disp_drv_init(&drv);drv.hor_res=240;drv.ver_res=280;drv.draw_buf=&buf;drv.refr_slice_cb=slice_expired;drv.flush_cb=qp_lvgl_flush;lv_disp_drv_register(&drv);
  root_view=lv_obj_create(NULL);lv_scr_load(root_view);display_init_screens_kb();display_housekeeping_task();render();
 }
 static int check(bool b,const char *s){printf("%s %s\n",b?"PASS":"FAIL",s);return !b;}
@@ -139,7 +141,12 @@ int main(int argc,char**argv){assert(argc==4);left=atoi(argv[2]);master=atoi(arg
   printf("after physical release: active=%u waiting=%u off_calls=%u flushes=%u\n",active_screen,waiting_for_keymap_frame,off_calls,flushes);
   failures+=check(active_screen==(left?SM62_SCREEN_CLOCK:SM62_SCREEN_ORBIT),"temporary KEYMAP must return to configured idle mode after release and real painter flush");
   for(unsigned mode=0;mode<4;mode++){
-   qmk_settings_proto_t p={left?230:235};uint8_t value=mode,got=255;assert(sm62_setting_set(&p,&value,1)==0);assert(sm62_setting_get(&p,&got,1)==0&&got==mode);now+=300;display_housekeeping_task();render();
+   lv_obj_invalidate(lv_scr_act());lv_refr_now(NULL);assert(lv_disp_refr_pending(NULL));
+   unsigned old_screen=active_screen,old_frames=completed_frames;
+   qmk_settings_proto_t p={left?230:235};uint8_t value=mode,got=255;assert(sm62_setting_set(&p,&value,1)==0);assert(sm62_setting_get(&p,&got,1)==0&&got==mode);now+=300;display_housekeeping_task();
+   failures+=check(active_screen==old_screen&&lv_disp_refr_pending(NULL),"mode SET/GET must not replace a partially flushed view");
+   render();failures+=check(completed_frames==old_frames+1,"old view frame completes exactly once before mode publication");
+   display_housekeeping_task();render();
    printf("mode SET/GET=%u active=%u waiting=%u\n",got,active_screen,waiting_for_keymap_frame);
    unsigned expected=mode==0?SM62_SCREEN_CLOCK:mode==1?SM62_SCREEN_PLAYER:mode==2?SM62_SCREEN_ORBIT:SM62_SCREEN_KEYMAP;
    failures+=check(active_screen==expected,"verified mode setting must govern idle visible view");
@@ -172,7 +179,7 @@ int main(int argc,char**argv){assert(argc==4);left=atoi(argv[2]);master=atoi(arg
 src=out/'display_probe.c';src.write_text(pre+h+settings+stripped('keyboards/ergohaven/sm62/application_display.c')+k+m+qp_pre+qp+test)
 fonts=['eh_font_iosevka_18','eh_font_iosevka_28'];fontpaths=[root/f'keyboards/ergohaven/src/display/fonts/{f}.c' for f in fonts]
 fontpaths += [root/f'keyboards/ergohaven/macropad/sm62_font_zen_medium_{n}.c' for n in [16,17,20,28]]
-cmd=['gcc','-std=gnu11','-O1','-g','-Wall','-Wextra','-Werror','-Wno-unused-function','-Wno-unused-variable','-Wno-unused-parameter','-fsanitize=undefined','-fno-sanitize-recover=all','-DLV_CONF_SKIP','-DLV_USE_LOG=1','-DLV_USE_ASSERT_MALLOC=1','-DKEYBOARD_ergohaven_sm62','-DEH_APP_LAYOUT_ENABLE',*['-I'+str(x) for x in [out/'stubs',a.lvgl,root,root/'quantum',root/'quantum/keymap_extras',root/'quantum/sequencer',root/'keyboards/ergohaven']],str(src),*map(str,fontpaths),*sorted(str(f) for f in (a.lvgl/'src').rglob('*.c')),'-lm','-o',str(out/'display_probe')]
+cmd=['gcc','-include','/home/agent/.hermes/profiles/ben/cache/scratch/sm62-test16-final/firmware/quantum/sm62_trace.h','-std=gnu11','-O1','-g','-Wall','-Wextra','-Werror','-Wno-unused-function','-Wno-unused-variable','-Wno-unused-parameter','-fsanitize=undefined','-fno-sanitize-recover=all','-DLV_CONF_SKIP','-DLV_USE_COOPERATIVE_REFR=1','-DLV_USE_LOG=1','-DLV_USE_ASSERT_MALLOC=1','-DKEYBOARD_ergohaven_sm62','-DEH_APP_LAYOUT_ENABLE',*['-I'+str(x) for x in [out/'stubs',a.lvgl,root,root/'quantum',root/'quantum/keymap_extras',root/'quantum/sequencer',root/'keyboards/ergohaven']],str(src),*map(str,fontpaths),*sorted(str(f) for f in (a.lvgl/'src').rglob('*.c')),'-lm','-o',str(out/'display_probe')]
 (out/'compile-command.json').write_text(json.dumps(cmd,indent=2));subprocess.run(cmd,check=True)
 logs=[];codes=[]
 for left in [0,1]:

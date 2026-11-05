@@ -6,7 +6,18 @@
 #include "timer.h"
 #include "sync_timer.h"
 #include "transactions.h"
+#if defined(KEYBOARD_ergohaven_sm62)
+#    include "flash_guard.h"
+#endif
 #include <string.h>
+#ifdef PROTOCOL_CHIBIOS
+#    include "ch.h"
+#    define SETTINGS_LOCK() chSysLock()
+#    define SETTINGS_UNLOCK() chSysUnlock()
+#else
+#    define SETTINGS_LOCK() ((void)0)
+#    define SETTINGS_UNLOCK() ((void)0)
+#endif
 
 typedef struct {
     uint8_t marker;
@@ -35,6 +46,7 @@ static uint32_t last_sync_attempt;
 static uint32_t sync_requested_at;
 static bool delay_sync_after_host_set;
 static bool pending_persist;
+static uint32_t persist_generation;
 static uint32_t persist_requested_at;
 static uint32_t local_mode_changed_at;
 static bool local_mode_transition_pending;
@@ -72,8 +84,11 @@ static void orbit_restart_setting(uint8_t side) {
 }
 
 static void schedule_persist(void) {
+    SETTINGS_LOCK();
+    ++persist_generation;
     pending_persist = true;
     persist_requested_at = timer_read32();
+    SETTINGS_UNLOCK();
 }
 
 void set_lcd_timeout_mins(uint8_t minutes) {
@@ -116,9 +131,36 @@ static bool valid(const sm62_saved_settings_t *value) {
     return true;
 }
 
-static void persist(void) {
-    eeconfig_update_kb_datablock(&saved, KB_SETTINGS_SM62_OFFSET, sizeof(saved));
-    eeconfig_update_kb_datablock(lcd_idle, KB_SETTINGS_LCD_OFFSET, sizeof(lcd_idle));
+static bool persist(void) {
+    /* Serial RPC may replace desired settings while flash waits/programs.
+     * Keep both records immutable and clear only the captured generation. */
+    sm62_saved_settings_t snapshot;
+    uint8_t idle_snapshot[sizeof(lcd_idle)];
+    SETTINGS_LOCK();
+    snapshot = saved;
+    memcpy(idle_snapshot, lcd_idle, sizeof(idle_snapshot));
+    uint32_t generation = persist_generation;
+    SETTINGS_UNLOCK();
+    bool ok = true;
+#if defined(KEYBOARD_ergohaven_sm62)
+    ok = sm62_flash_begin();
+#endif
+    if (ok) {
+        eeconfig_update_kb_datablock(&snapshot, KB_SETTINGS_SM62_OFFSET, sizeof(snapshot));
+        eeconfig_update_kb_datablock(idle_snapshot, KB_SETTINGS_LCD_OFFSET, sizeof(idle_snapshot));
+#if defined(KEYBOARD_ergohaven_sm62)
+        ok = sm62_flash_end();
+#endif
+    }
+    SETTINGS_LOCK();
+    if (!ok) {
+        pending_persist = true;
+        persist_requested_at = timer_read32();
+    } else if (generation == persist_generation) {
+        pending_persist = false;
+    }
+    SETTINGS_UNLOCK();
+    return ok;
 }
 
 void kb_settings_extra_reset(void) {
@@ -332,7 +374,6 @@ void sm62_settings_sync_task(void) {
     // Leave the host's mode-switch readback window clear of flash writes too.
     if (pending_persist && timer_elapsed32(persist_requested_at) >= 4000U) {
         persist();
-        pending_persist = false;
     }
     /* Replay heals a slave reboot/lost acknowledgement; unchanged RPCs do not write. */
     if (!is_keyboard_master() || timer_elapsed32(last_sync_attempt) < (pending_sync ? 500U : 5000U)) return;

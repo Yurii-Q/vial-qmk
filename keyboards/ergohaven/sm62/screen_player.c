@@ -1,6 +1,7 @@
 // Copyright 2026 Ergohaven
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "keyboards/ergohaven/sm62/render_alias.h"
 #include "src/display/eh_display.h"
 #include <lvgl.h>
 #include "application_display.h"

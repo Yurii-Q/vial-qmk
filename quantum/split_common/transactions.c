@@ -1008,7 +1008,7 @@ void transactions_slave(matrix_row_t master_matrix[], matrix_row_t slave_matrix[
 
 void transaction_register_rpc(int8_t transaction_id, slave_callback_t callback) {
     // Prevent invoking RPC on QMK core sync data
-    if (transaction_id <= GET_RPC_RESP_DATA) return;
+    if (transaction_id <= GET_RPC_RESP_DATA || transaction_id >= NUM_TOTAL_TRANSACTIONS) return;
 
     // Set the callback
     split_transaction_table[transaction_id].slave_callback          = callback;
@@ -1022,7 +1022,7 @@ bool transaction_rpc_exec(int8_t transaction_id, uint8_t initiator2target_buffer
         return false;
     }
     // Prevent invoking RPC on QMK core sync data
-    if (transaction_id <= GET_RPC_RESP_DATA) return false;
+    if (transaction_id <= GET_RPC_RESP_DATA || transaction_id >= NUM_TOTAL_TRANSACTIONS) return false;
     // Prevent sizing issues
     if (initiator2target_buffer_size > RPC_M2S_BUFFER_SIZE) return false;
     if (target2initiator_buffer_size > RPC_S2M_BUFFER_SIZE) return false;
@@ -1073,7 +1073,7 @@ void slave_rpc_exec_callback(uint8_t initiator2target_buffer_size, const void *i
     }
 
     int8_t transaction_id = split_shmem->rpc_info.payload.transaction_id;
-    if (transaction_id < NUM_TOTAL_TRANSACTIONS) {
+    if (transaction_id > GET_RPC_RESP_DATA && transaction_id < NUM_TOTAL_TRANSACTIONS) {
         split_transaction_desc_t *trans = &split_transaction_table[transaction_id];
         if (trans->slave_callback) {
             trans->slave_callback(split_shmem->rpc_info.payload.m2s_length, split_shmem->rpc_m2s_buffer, split_shmem->rpc_info.payload.s2m_length, split_shmem->rpc_s2m_buffer);

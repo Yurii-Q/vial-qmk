@@ -1,6 +1,7 @@
 // Copyright 2026 Ergohaven
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "keyboards/ergohaven/sm62/render_alias.h"
 #include "display.h"
 #include "hid.h"
 #include "src/display/eh_display.h"
@@ -32,7 +33,12 @@ static eh_screen_t current_screen;
 static bool orbit_initialized;
 static bool startup_display_released;
 static bool screens_were_off;
-uint8_t sm62_diag_screen(void) { return screens_were_off || sm62_local_screens_off() ? 4 : (uint8_t)active_screen; }
+uint8_t sm62_diag_screen(void) {
+#if defined(SM62_DUALCORE_RENDER)
+    if (!sm62_render_is_owner()) return sm62_render_screen();
+#endif
+    return screens_were_off || sm62_local_screens_off() ? 4 : (uint8_t)active_screen;
+}
 #if SM62_FAST_RETURN
 static uint32_t local_activity_at;
 static uint32_t display_ready_at;
@@ -42,8 +48,12 @@ static uint32_t keymap_frame_at;
 
 /* Called only after LVGL has flushed the final chunk of a frame. */
 void display_frame_completed(void) {
+#if defined(SM62_DUALCORE_RENDER)
+    sm62_render_frame(sm62_diag_screen());
+#else
     sm62_fps_frame(sm62_diag_screen());
     sm62_diag_frame();
+#endif
     if (active_screen == SM62_SCREEN_CLOCK) sm62_main_frame_completed();
     if (active_screen == SM62_SCREEN_PLAYER) sm62_player_frame_completed();
     if (active_screen == SM62_SCREEN_ORBIT) sm62_orbit_frame_completed();
@@ -76,7 +86,14 @@ void display_init_screens_kb(void) {
 
 void display_housekeeping_task(void) {
     /* Service host data even if painter initialization failed. */
+#if !defined(SM62_DUALCORE_RENDER)
     hid_housekeeping_task();
+#endif
+#ifdef LV_USE_COOPERATIVE_REFR
+    /* Do not advance a view/frame lease while its pixels are in flight.
+     * HID/split ownership still progresses on the ordinary main loop. */
+    if (lv_disp_refr_pending(NULL)) return;
+#endif
     bool mode_transition_pending = sm62_local_mode_transition_pending();
     if (!is_display_enabled() && !display_init_kb()) return;
     /* QMK's split activity clock includes keys on either half, not media HID.

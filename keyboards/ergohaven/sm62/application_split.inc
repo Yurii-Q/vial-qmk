@@ -17,6 +17,9 @@ static sm62_app_image_t sm62_app_tx, sm62_app_rx;
 // infer equality from the visual generation: Default EEPROM has other writers.
 static sm62_app_image_t sm62_app_acked;
 static bool sm62_app_acked_valid, sm62_app_rx_retained;
+static uint32_t sm62_app_acked_epoch, sm62_app_rx_base_epoch;
+static uint16_t sm62_app_rx_base_crc;
+static bool sm62_app_tx_delta, sm62_app_tx_delta_begin, sm62_app_rx_delta;
 static uint32_t sm62_app_heartbeat_time, sm62_app_published_generation;
 static uint8_t sm62_app_published_identity[20];
 static bool sm62_app_published_identity_seen;
@@ -128,6 +131,38 @@ static void sm62_app_rpc(uint8_t in_len, const void *in, uint8_t out_len, void *
     uint32_t epoch = app_layout_read_u32(p);
     uint16_t offset = p[4] | ((uint16_t)p[5] << 8);
     uint8_t n = p[6];
+    // Sparse update BEGIN: bind the retained byte image, not just its CRC.
+    // DATA still carries absolute, monotonically increasing 31-byte offsets;
+    // skipped bytes retain their acknowledged values. Publication remains an
+    // all-image CRC/format commit at the mandatory final DATA chunk. No partial
+    // name/key/action becomes visible, and rejection falls back to full DATA.
+    if (!n && offset == 0xfffe) {
+        if (__atomic_load_n(&sm62_app_rx_pending, __ATOMIC_ACQUIRE)) return;
+        for (uint8_t i = 14; i < 38; ++i) if (p[i]) return;
+        if (p[13] != 1) return;
+        uint32_t base_epoch = app_layout_read_u32(p + 7);
+        uint16_t base_crc = p[11] | ((uint16_t)p[12] << 8);
+        // Retry only the exact BEGIN before any DATA; lost ACK is harmless.
+        if (sm62_app_rx_delta && !sm62_app_rx_invalid && epoch == sm62_app_rx_epoch &&
+            !sm62_app_rx_offset && base_epoch == sm62_app_rx_base_epoch && base_crc == sm62_app_rx_base_crc) {
+            ack[0] = 3;
+            return;
+        }
+        if (!sm62_app_rx_seen || !__atomic_load_n(&sm62_app_rx_retained, __ATOMIC_ACQUIRE) ||
+            sm62_app_rx_invalid || sm62_app_rx_offset != sizeof(sm62_app_rx) ||
+            base_epoch != sm62_app_rx_epoch || base_crc != sm62_app_rx.crc ||
+            (int32_t)(epoch - sm62_app_rx_epoch) <= 0 || !sm62_app_image_valid()) return;
+        sm62_app_rx_base_epoch = base_epoch;
+        sm62_app_rx_base_crc = base_crc;
+        sm62_app_rx_epoch = epoch;
+        sm62_app_rx_offset = 0;
+        sm62_app_rx_time = timer_read32();
+        sm62_app_rx_delta = true;
+        __atomic_store_n(&sm62_app_rx_retained, false, __ATOMIC_RELEASE);
+        sm62_app_put32(ack + 1, sm62_app_rx_epoch);
+        ack[0] = 3;
+        return;
+    }
     // n=0, offset=0xffff is an explicit retained-image heartbeat, never DATA.
     // CRC, revision, active bit and semantic identity bind it to the exact
     // published epoch. A partial/new/expired image cannot acknowledge it.
@@ -162,6 +197,7 @@ static void sm62_app_rpc(uint8_t in_len, const void *in, uint8_t out_len, void *
         sm62_app_rx_offset = 0;
         sm62_app_rx_time = timer_read32();
         sm62_app_rx_invalid = false;
+        sm62_app_rx_delta = false;
         __atomic_store_n(&sm62_app_rx_retained, false, __ATOMIC_RELEASE);
     }
     sm62_app_put32(ack + 1, sm62_app_rx_epoch);
@@ -173,12 +209,12 @@ static void sm62_app_rpc(uint8_t in_len, const void *in, uint8_t out_len, void *
         ack[0] = offset + n <= sm62_app_rx_offset && memcmp((uint8_t *)&sm62_app_rx + offset, p + 7, n) == 0;
         return;
     }
-    if (offset != sm62_app_rx_offset) return;
+    if (offset != sm62_app_rx_offset && !sm62_app_rx_delta) return;
     memcpy((uint8_t *)&sm62_app_rx + offset, p + 7, n);
     // Expire an idle/incomplete transfer, not a steadily progressing image.
     // Display/SPI work can stretch the complete image beyond one host TTL.
     sm62_app_rx_time = timer_read32();
-    sm62_app_rx_offset += n;
+    sm62_app_rx_offset = offset + n;
     if (sm62_app_rx_offset == sizeof(sm62_app_rx)) {
         if (!sm62_app_image_valid()) {
             sm62_app_rx_invalid = true;
@@ -198,6 +234,7 @@ static void sm62_app_split_step(void) {
                    (sm62_app_tx_offset == sizeof(sm62_app_tx) && sm62_app_tx_generation != app_layout_visual_generation);
     bool heartbeat = false;
     if (changed || (sm62_app_tx_offset == sizeof(sm62_app_tx) && timer_elapsed32(sm62_app_tx_time) >= 500)) {
+        bool delta_candidate = sm62_app_acked_valid && sm62_app_tx_offset == sizeof(sm62_app_tx);
         sm62_app_capture();
         sm62_app_tx_generation = app_layout_visual_generation;
         sm62_app_tx_live = live;
@@ -205,11 +242,20 @@ static void sm62_app_split_step(void) {
                     memcmp(&sm62_app_tx, &sm62_app_acked, sizeof(sm62_app_tx)) == 0;
         if (!heartbeat) {
             sm62_app_tx_epoch++;
+            sm62_app_tx_delta = delta_candidate;
+            sm62_app_tx_delta_begin = delta_candidate;
             sm62_app_tx_offset = 0;
         }
         sm62_app_tx_started = true;
     }
     if (sm62_app_tx_offset == sizeof(sm62_app_tx) && !heartbeat) return;
+    // Always send the final chunk, even for a CRC16 collision. Exact byte
+    // comparison selects dirty chunks; CRC equality is never a change detector.
+    if (sm62_app_tx_delta && !sm62_app_tx_delta_begin && !heartbeat) {
+        while ((uint32_t)sm62_app_tx_offset + 31 < sizeof(sm62_app_tx) &&
+               !memcmp((uint8_t *)&sm62_app_tx + sm62_app_tx_offset,
+                       (uint8_t *)&sm62_app_acked + sm62_app_tx_offset, 31)) sm62_app_tx_offset += 31;
+    }
     uint8_t packet[40] = {0}, ack[5] = {0};
     sm62_app_put32(packet, sm62_app_tx_epoch);
     packet[4] = sm62_app_tx_offset;
@@ -218,6 +264,13 @@ static void sm62_app_split_step(void) {
     uint8_t n = remaining > 31 ? 31 : remaining;
     packet[6] = n;
     memcpy(packet + 7, (uint8_t *)&sm62_app_tx + sm62_app_tx_offset, n);
+    if (sm62_app_tx_delta_begin && !heartbeat) {
+        packet[4] = 0xfe; packet[5] = 0xff; packet[6] = 0;
+        memset(packet + 7, 0, 31);
+        sm62_app_put32(packet + 7, sm62_app_acked_epoch);
+        packet[11] = sm62_app_acked.crc; packet[12] = sm62_app_acked.crc >> 8;
+        packet[13] = 1;
+    }
     if (heartbeat) {
         packet[4] = packet[5] = 0xff;
         packet[6] = 0;
@@ -231,14 +284,17 @@ static void sm62_app_split_step(void) {
     }
     uint16_t crc = sm62_app_crc(packet, 38);
     packet[38] = crc; packet[39] = crc >> 8;
+    sm62_trace_count(14);
     if (!transaction_rpc_exec(RPC_SM62_APP_LAYOUT, sizeof(packet), packet, sizeof(ack), ack)) return;
-    if (ack[0] == (heartbeat ? 2 : 1) && app_layout_read_u32(ack + 1) == sm62_app_tx_epoch) {
+    if (ack[0] == (heartbeat ? 2 : sm62_app_tx_delta_begin ? 3 : 1) && app_layout_read_u32(ack + 1) == sm62_app_tx_epoch) {
         if (heartbeat) return;
+        if (sm62_app_tx_delta_begin) { sm62_app_tx_delta_begin = false; return; }
         sm62_app_tx_offset += n;
         if (sm62_app_tx_offset == sizeof(sm62_app_tx)) {
             sm62_app_tx_time = timer_read32();
             memcpy(&sm62_app_acked, &sm62_app_tx, sizeof(sm62_app_acked));
             sm62_app_acked_valid = true;
+            sm62_app_acked_epoch = sm62_app_tx_epoch;
         }
     } else {
         // Peer retained a newer epoch across a USB-master reset. Negotiate a
@@ -247,6 +303,7 @@ static void sm62_app_split_step(void) {
         if ((int32_t)(peer_epoch - sm62_app_tx_epoch) >= 0) sm62_app_tx_epoch = peer_epoch + 1;
         else sm62_app_tx_epoch++;
         sm62_app_tx_offset = 0;
+        sm62_app_tx_delta = sm62_app_tx_delta_begin = false;
     }
 }
 void hid_app_layout_split_task(void) {
@@ -274,7 +331,9 @@ void hid_app_layout_split_task(void) {
         }
         return;
     }
-    // Bounded work: at most four 40-byte payloads per loop; service matrix and
-    // display work between batches. No full-image heap allocation is required.
+    // Intentional ordinary-loop budget: four 40-byte payloads, not the eight
+    // previously caused by duplicate user housekeeping. Keep the existing
+    // tested four-packet sender/TTL budget; matrix, HID and display run between
+    // batches. Cold full-image transfer still requires 214 DATA RPCs.
     for (uint8_t i = 0; i < 4; ++i) sm62_app_split_step();
 }
