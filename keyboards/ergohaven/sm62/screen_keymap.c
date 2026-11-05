@@ -760,44 +760,26 @@ static void reset_focus(bool left) {
     first_visual_col = left ? 2 : 0; /* QWE / ASD / ZXC; YUI / HJK / NM, */
 }
 
-static void keep_key_visible(bool left, uint8_t row, uint8_t col) {
-    uint8_t visual_col = visual_col_from_matrix(left, col);
-
+/* Center every real press, clamping to the physical span through that key.
+ * Shifted outside switches and the short thumb row have their own edges;
+ * the rectangular matrix bounds alone would leave empty rows/columns. */
+static void focus_key(bool left, uint8_t row, uint8_t col) {
+    if (!physical_key_exists(left, row, col)) return;
     uint8_t visual_row = visual_row_from_matrix(left, row, col);
-    if (visual_row < first_row) {
-        first_row = visual_row;
-    } else if (visual_row > first_row + 2U) {
-        first_row = visual_row - 2U;
-    }
-
-    if (visual_col < first_visual_col) {
-        first_visual_col = visual_col;
-    } else if (visual_col > first_visual_col + 2U) {
-        first_visual_col = visual_col - 2U;
-    }
-
-    if (first_row > 2U) first_row = 2U;
-    if (first_visual_col > 4U) first_visual_col = 4U;
-}
-
-/* One-shot focus after a layer change. Upper keys stay in the top row;
- * lower keys use the middle row when a physical key exists below at the
- * same column, otherwise the bottom row. This avoids wasting view space.
- * Later presses retain normal edge-only panning. */
-static void focus_top_center_on_key(bool left, uint8_t row, uint8_t col) {
     uint8_t visual_col = visual_col_from_matrix(left, col);
-    uint8_t visual_row = visual_row_from_matrix(left, row, col);
-    if (left && col == 6U && visual_row == 2U) {
-        /* Shifted CAPS uses the middle row; shifted DEL falls through to
-         * the bottom-row rule so it occupies the lower-left grid corner. */
-        first_row = visual_row - 1U;
-    } else if (visual_row >= 3U) {
-        first_row = visual_key_exists(left, visual_row + 1U, col) ? visual_row - 1U : visual_row - 2U;
-    } else {
-        first_row = visual_row;
-    }
+    uint8_t min_row = visual_row, max_row = visual_row;
+    uint8_t min_col = visual_col, max_col = visual_col;
+    while (min_row > 0U && visual_key_exists(left, min_row - 1U, col)) --min_row;
+    while (visual_key_exists(left, max_row + 1U, col)) ++max_row;
+    while (min_col > 0U && visual_key_exists(left, visual_row, matrix_col_from_visual(left, min_col - 1U))) --min_col;
+    while (max_col < 6U && visual_key_exists(left, visual_row, matrix_col_from_visual(left, max_col + 1U))) ++max_col;
+
+    first_row = visual_row > 0U ? visual_row - 1U : 0U;
     first_visual_col = visual_col > 0U ? visual_col - 1U : 0U;
-    if (first_visual_col > 4U) first_visual_col = 4U;
+    if (first_row < min_row) first_row = min_row;
+    if (first_row + 2U > max_row) first_row = max_row - 2U;
+    if (first_visual_col < min_col) first_visual_col = min_col;
+    if (first_visual_col + 2U > max_col) first_visual_col = max_col - 2U;
 }
 
 /* Stock layout hold is 200 ms, not the 96 ms color fade. Temporary views
@@ -1029,13 +1011,13 @@ static bool scan_keys(bool left) {
                     if (focus_next_press_after_layer_change) {
                         uint16_t keycode = sm62_effective_keycode(get_current_layer(), global_row(left, row), col);
                         if (!keycode_is_layer_switch(keycode)) {
-                            focus_top_center_on_key(left, row, col);
+                            focus_key(left, row, col);
                             focus_next_press_after_layer_change = false;
                         } else {
-                            keep_key_visible(left, row, col);
+                            focus_key(left, row, col);
                         }
                     } else {
-                        keep_key_visible(left, row, col);
+                        focus_key(left, row, col);
                     }
 #if SM62_EFFECT > 0
                     effect_start(row, col);
@@ -1066,10 +1048,10 @@ bool sm62_keymap_observe_matrix(void) {
         recent_press_row = row;
         recent_press_col = col;
         if (focus_next_press_after_layer_change && !keycode_is_layer_switch(sm62_effective_keycode(captured_press.layer, global_row(left, row), col))) {
-            focus_top_center_on_key(left, row, col);
+            focus_key(left, row, col);
             focus_next_press_after_layer_change = false;
         } else {
-            keep_key_visible(left, row, col);
+            focus_key(left, row, col);
         }
         if (captured_press.released) {
             released_fading[row][col] = true;
@@ -1220,7 +1202,7 @@ static void screen_keymap_housekeep(void) {
         if (old_layer != 0xFF && recent_press_valid) {
             uint16_t keycode = sm62_effective_keycode(old_layer, global_row(left, recent_press_row), recent_press_col);
             if (!keycode_is_layer_switch(keycode)) {
-                focus_top_center_on_key(left, recent_press_row, recent_press_col);
+                focus_key(left, recent_press_row, recent_press_col);
                 focus_next_press_after_layer_change = false;
             } else {
                 focus_next_press_after_layer_change = true;

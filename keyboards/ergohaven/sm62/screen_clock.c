@@ -91,8 +91,21 @@ static void clock_label_positions(bool live) {
         lv_coord_t right = 132 + six.adv_w + last.ofs_x + last.box_w;
         lv_obj_update_layout(screen_main);
         shift = (lv_obj_get_width(screen_main) - (right - left)) / 2 - left;
+    } else {
+        /* Measure current text at the original anchors; never accumulate shifts. */
+        const char *hours = lv_label_get_text(label_hours);
+        const char *minutes = lv_label_get_text(label_minutes);
+        lv_point_t hours_size;
+        lv_font_glyph_dsc_t first, minute_first, last;
+        lv_txt_get_size(&hours_size, hours, &sm62_font_unbounded_48, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+        lv_font_get_glyph_dsc(&sm62_font_unbounded_48, &first, hours[0], hours[1]);
+        lv_font_get_glyph_dsc(&sm62_font_unbounded_48, &minute_first, minutes[0], minutes[1]);
+        lv_font_get_glyph_dsc(&sm62_font_unbounded_48, &last, minutes[1], 0);
+        lv_coord_t left = 7 + 98 - hours_size.x + first.ofs_x;
+        lv_coord_t right = 132 + minute_first.adv_w + last.ofs_x + last.box_w;
+        lv_obj_update_layout(screen_main);
+        shift = (lv_obj_get_width(screen_main) - (right - left)) / 2 - left;
     }
-    /* A live clock must retain the original positions exactly. */
     lv_obj_set_x(label_hours, 7 + shift);
     lv_obj_set_x(label_colon, 110 + shift);
     lv_obj_set_x(label_minutes, 132 + shift);
@@ -147,9 +160,9 @@ static void update_time(bool force) {
         return;
     }
     if (force || !clock_live || hid->time_changed) {
-        if (force || !clock_live) clock_label_positions(true);
         lv_label_set_text_fmt(label_hours, "%02u", hid->hours);
         lv_label_set_text_fmt(label_minutes, "%02u", hid->minutes);
+        clock_label_positions(true);
     }
     clock_live = true;
     hid->time_changed = false;

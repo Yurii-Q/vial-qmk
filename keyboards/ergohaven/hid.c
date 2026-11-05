@@ -250,11 +250,15 @@ void hid_app_layout_task(void) {
 }
 
 #ifdef SM62_RAW_HID_FRAME_GATE
-/* Only this parser-owned, write-only RAM family is safe while pixels are in
- * flight. Wrong versions and E6 replies retain the ordinary FIFO path. */
+/* Parser-owned RAM packets plus the exact event request are safe while
+ * pixels are in flight. E6 only acknowledges the core0 event queue and replies
+ * through VIA; core1 renders its leased snapshot, never this queue. Wrong
+ * versions, sizes and E6 subcommands retain the ordinary FIFO path. */
 bool hid_app_layout_packet_safe_during_refresh(const uint8_t *data, uint8_t length) {
     if (length != 32 || data[1] != EH_APP_LAYOUT_PROTOCOL_VERSION) return false;
     switch (data[0]) {
+        case EH_APP_LAYOUT_EVENT_POLL:
+            return data[2] == EH_APP_LAYOUT_EVENT_REQUEST;
         case EH_APP_LAYOUT_BEGIN:
         case EH_APP_LAYOUT_KEYCODES:
         case EH_APP_LAYOUT_VISUALS:

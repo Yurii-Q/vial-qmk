@@ -213,7 +213,7 @@ commands=[]
 for role in ['master','peer']:
  src=P/(role+'.c');src.write_text(body.replace('ROLE_',role+'_')+extra.replace('ROLE_',role+'_'))
  obj=src.with_suffix('.o')
- cmd=['gcc','-include','/home/agent/.hermes/profiles/ben/cache/scratch/sm62-test16-final/firmware/quantum/sm62_trace.h','-std=gnu11','-O0','-g','-Wall','-Wextra','-Werror','-Wno-unused-function','-Wno-type-limits','-fsanitize=undefined','-fno-sanitize-recover=all','-finstrument-functions',f'-DIS_MASTER={int(role=="master")}','-DKEYBOARD_ergohaven_sm62','-DEH_SM62_SPLIT_RUNTIME_ENABLE','-I'+str(ROOT/'keyboards/ergohaven'),'-c',str(src),'-o',str(obj)]
+ cmd=['gcc','-include',str(ROOT/'quantum/sm62_trace.h'),'-std=gnu11','-O0','-g','-Wall','-Wextra','-Werror','-Wno-unused-function','-Wno-type-limits','-fsanitize=undefined','-fno-sanitize-recover=all','-finstrument-functions',f'-DIS_MASTER={int(role=="master")}','-DKEYBOARD_ergohaven_sm62','-DEH_SM62_SPLIT_RUNTIME_ENABLE','-I'+str(ROOT/'keyboards/ergohaven'),'-c',str(src),'-o',str(obj)]
  commands.append(cmd);subprocess.run(cmd,check=True)
  syms=subprocess.check_output(['nm','-g','--defined-only',str(obj)],text=True)
  local=[l.split()[-1] for l in syms.splitlines() if not l.split()[-1].startswith(role+'_')]
@@ -291,7 +291,7 @@ int main(int argc,char**argv){
 }
 '''
 (P/'main.c').write_text(main)
-cmd=['gcc','-include','/home/agent/.hermes/profiles/ben/cache/scratch/sm62-test16-final/firmware/quantum/sm62_trace.h','-fsanitize=undefined','-fno-sanitize-recover=all',str(P/'main.c'),str(P/'master.o'),str(P/'peer.o'),'-o',str(P/'test_cached')];commands.append(cmd);subprocess.run(cmd,check=True)
+cmd=['gcc','-include',str(ROOT/'quantum/sm62_trace.h'),'-fsanitize=undefined','-fno-sanitize-recover=all',str(P/'main.c'),str(P/'master.o'),str(P/'peer.o'),'-o',str(P/'test_cached')];commands.append(cmd);subprocess.run(cmd,check=True)
 for arg in [['0','0'],['0','1'],['1','0'],['1','1']]:
  cmd=[str(P/'test_cached'),*arg];commands.append(cmd);subprocess.run(cmd,check=True)
 (P/'test-commands.json').write_text(json.dumps(commands,indent=2)+'\n')
