@@ -1,0 +1,55 @@
+{
+  "source_commit": "1e2857fe9ebb3e2dcd3468a1803ac5b4a330de49",
+  "dependencies": [
+    {
+      "path": "lib/chibios",
+      "revision": "8bd61b804303f1614d574546c2dd735eeabb09f5",
+      "object_repository": "/home/agent/projects/ben/vial-qmk/lib/chibios"
+    },
+    {
+      "path": "lib/chibios-contrib",
+      "revision": "3ac181e4ca5cafddaf8b472baa1d09c2b24c77b6",
+      "object_repository": "/home/agent/projects/ben/vial-qmk/lib/chibios-contrib"
+    },
+    {
+      "path": "lib/chibios-contrib/ext/mcux-sdk",
+      "revision": "102c27d7cc2aaac87c133702e7829a105e0cb433",
+      "object_repository": "/home/agent/projects/ben/vial-qmk/lib/chibios-contrib/ext/mcux-sdk"
+    },
+    {
+      "path": "lib/googletest",
+      "revision": "e2239ee6043f73722e7aa812a459f54a28552929",
+      "object_repository": "/home/agent/projects/ben/vial-qmk/lib/googletest"
+    },
+    {
+      "path": "lib/lufa",
+      "revision": "549b97320d515bfca2f95c145a67bd13be968faa",
+      "object_repository": "/home/agent/projects/ben/vial-qmk/lib/lufa"
+    },
+    {
+      "path": "lib/lvgl",
+      "revision": "e19410f8f8a256609da72cff549598e0df6fa4cf",
+      "object_repository": "/home/agent/projects/ben/vial-qmk/lib/lvgl"
+    },
+    {
+      "path": "lib/pico-sdk",
+      "revision": "d0c5cac430cc955b65efa0e899748853d9a80928",
+      "object_repository": "/home/agent/projects/ben/vial-qmk/lib/pico-sdk"
+    },
+    {
+      "path": "lib/printf",
+      "revision": "c2e3b4e10d281e7f0f694d3ecbd9f320977288cc",
+      "object_repository": "/home/agent/projects/ben/vial-qmk/lib/printf"
+    },
+    {
+      "path": "lib/vusb",
+      "revision": "819dbc1e5d5926b17e27e00ca6d3d2988adae04e",
+      "object_repository": "/home/agent/projects/ben/vial-qmk/lib/vusb"
+    }
+  ],
+  "missing_gitlinks": [],
+  "overlays": "none outside immutable commits",
+  "compiler_test_performed": false,
+  "source_files": 44176,
+  "source_identity": "all tracked Git blobs, recursive gitlinks, no working-tree files"
+}
