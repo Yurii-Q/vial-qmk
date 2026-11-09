@@ -33,6 +33,9 @@ static void vial_keycode_up(uint16_t k){ups++;up_code=k;}
 static void vial_keycode_tap(uint16_t k){(void)k;taps++;}
 static void hid_app_layout_changed_kb(void){}
 PRODUCTION
+const uint8_t *sm62_cache_flash_record(unsigned r){static const uint8_t empty[8192];return r<SM62_CACHE_RECORDS?empty:NULL;}
+bool sm62_cache_flash_erase(unsigned r){(void)r;return false;}
+bool sm62_cache_flash_program(unsigned r,unsigned off,const uint8_t*p){(void)r;(void)off;(void)p;return false;}
 int main(void){
  assert(EH_APP_LAYOUT_CONTROL_COUNT==62);
  assert(EH_APP_LAYOUT_KEY_COUNT==62);
@@ -84,7 +87,7 @@ int main(void){
 }
 '''
 import json
-positions=json.loads(subprocess.check_output(['git','show','8797193afd69689b4130b2525118760103531763:keyboards/ergohaven/sm62/keyboard.json'],cwd=ROOT))['layouts']['LAYOUT']['layout']
+positions=json.loads((ROOT/'keyboards/ergohaven/sm62/keyboard.json').read_text())['layouts']['LAYOUT']['layout']
 assert len(positions)==62
 text=text.replace('PRODUCTION',src).replace('POSITIONS','{'+','.join('{'+','.join(map(str,k['matrix']))+'}' for k in positions)+'}')
 source=a.output/'sm62_layout.c';source.write_text(text)

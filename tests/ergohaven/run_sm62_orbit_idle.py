@@ -8,8 +8,14 @@ p=argparse.ArgumentParser(description=__doc__)
 p.add_argument('output',type=Path)
 p.add_argument('--source',type=Path,default=Path(__file__).resolve().parents[2])
 a=p.parse_args();a.output.mkdir(parents=True,exist_ok=True)
-from macropad_native_support import validate_lvgl,write_stubs
-lvgl=a.source/'lib/lvgl';validate_lvgl(lvgl);write_stubs(a.output/'stubs')
+from macropad_native_support import write_stubs
+# This SM62 target includes the already approved timer-fairness overlay.
+# Keep the shared historical Macropad validator unchanged; use the complete
+# SM62 manifest validator rather than weakening a pinned-blob check.
+inputs=Path(__file__).resolve().parent/'sm62_test19/inputs'
+scope={'INPUTS':inputs}
+exec(compile((inputs/'validate_lvgl.py').read_text(),'validate_lvgl.py','exec'),scope)
+lvgl=a.source/'lib/lvgl';scope['validate_lvgl'](lvgl);write_stubs(a.output/'stubs')
 def stripped(n):
     return re.sub(r'^#(?:include[^\n]*|pragma once)','',(a.source/n).read_text(),flags=re.M)
 pre=r'''
@@ -154,7 +160,7 @@ int main(int argc,char**argv){
 qp=(a.source/'quantum/painter/lvgl/qp_lvgl.c').read_text();start=qp.index('void qp_lvgl_flush(');end=qp.index('\nstatic uint32_t tick_task_callback',start);qp=qp[start:end]
 src=a.output/'orbit_idle.c';src.write_text(pre+stripped('quantum/sync_timer.c')+stripped('keyboards/ergohaven/sm62/sm62_settings.h')+stripped('keyboards/ergohaven/sm62/sm62_settings.c')+stripped('keyboards/ergohaven/sm62/display_modes.c')+qp+main)
 exe=a.output/'orbit_idle'
-subprocess.run(['gcc','-include','/home/agent/.hermes/profiles/ben/cache/scratch/sm62-test16-final/firmware/quantum/sm62_trace.h','-std=gnu11','-O1','-Wall','-Wextra','-Werror','-Wno-unused-function','-fsanitize=undefined','-fno-sanitize-recover=all','-DLV_CONF_SKIP','-DLV_USE_COOPERATIVE_REFR=1','-DLV_USE_LOG=1','-DLV_USE_ASSERT_MALLOC=1','-I'+str(a.output/'stubs'),'-I'+str(lvgl),str(src),*sorted(str(f) for f in (lvgl/'src').rglob('*.c')),'-lm','-o',str(exe)],check=True)
+subprocess.run(['gcc','-include',str(a.source/'quantum/sm62_trace.h'),'-std=gnu11','-O1','-Wall','-Wextra','-Werror','-Wno-unused-function','-fsanitize=undefined','-fno-sanitize-recover=all','-DLV_CONF_SKIP','-DLV_USE_COOPERATIVE_REFR=1','-DLV_USE_LOG=1','-DLV_USE_ASSERT_MALLOC=1','-I'+str(a.output/'stubs'),'-I'+str(lvgl),str(src),*sorted(str(f) for f in (lvgl/'src').rglob('*.c')),'-lm','-o',str(exe)],check=True)
 results=[]
 def run(args):
  r=subprocess.run([str(exe),*map(str,args)],capture_output=True,text=True);results.append({'args':list(map(str,args)),'exit':r.returncode,'output':r.stdout+r.stderr})

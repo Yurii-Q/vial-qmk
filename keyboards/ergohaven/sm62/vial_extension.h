@@ -4,7 +4,7 @@
 #include <stdint.h>
 #define SM62_EXT_BANK_SIZE 4096U
 #define SM62_EXT_DATA_SIZE 840U
-#define SM62_EXT_FLASH_BASE 0x1fa000U
+#define SM62_EXT_FLASH_BASE 0x3fa000U
 int sm62_vial_ext_get(uint8_t kind, uint8_t index, void *entry);
 int sm62_vial_ext_set(uint8_t kind, uint8_t index, const void *entry);
 int sm62_vial_ext_reset(void);

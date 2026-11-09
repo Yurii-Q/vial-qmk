@@ -797,10 +797,22 @@ static void pointing_handlers_slave(matrix_row_t master_matrix[], matrix_row_t s
 
 static bool watchdog_handlers_master(matrix_row_t master_matrix[], matrix_row_t slave_matrix[]) {
     bool okay = true;
+#if defined(KEYBOARD_ergohaven_sm62)
+    /* A peer can restart without the master's disconnect threshold firing.
+     * Reconfirm the boot handshake so that the fresh peer does not reset
+     * forever while this master retains its previous successful handshake. */
+    static uint32_t last_ping = 0;
+    if (!split_watchdog_check() || timer_elapsed32(last_ping) >= 500U) {
+        okay = transport_write(PUT_WATCHDOG, &okay, sizeof(okay));
+        split_watchdog_update(okay);
+        if (okay) last_ping = timer_read32();
+    }
+#else
     if (!split_watchdog_check()) {
         okay = transport_write(PUT_WATCHDOG, &okay, sizeof(okay));
         split_watchdog_update(okay);
     }
+#endif
     return okay;
 }
 
@@ -1055,16 +1067,41 @@ bool transaction_rpc_exec(int8_t transaction_id, uint8_t initiator2target_buffer
     return true;
 }
 
+#if defined(KEYBOARD_ergohaven_sm62)
+static bool sm62_rpc_info_valid;
+#endif
+
 void slave_rpc_info_callback(uint8_t initiator2target_buffer_size, const void *initiator2target_buffer, uint8_t target2initiator_buffer_size, void *target2initiator_buffer) {
     // The RPC info block contains the intended transaction ID, as well as the sizes for both inbound and outbound data.
     // Ignore the args -- the `split_shmem` already has the info, we just need to act upon it.
     // We must keep the `split_transaction_table` non-const, so that it is able to be modified at runtime.
 
+#if defined(KEYBOARD_ergohaven_sm62)
+    /* A peer restart can interrupt a metadata transfer. Validate before its
+     * lengths reach the serial receiver, not only before executing the RPC. */
+    sm62_rpc_info_valid = false;
+    split_transaction_table[PUT_RPC_REQ_DATA].initiator2target_buffer_size = 0;
+    split_transaction_table[GET_RPC_RESP_DATA].target2initiator_buffer_size = 0;
+    int8_t transaction_id = split_shmem->rpc_info.payload.transaction_id;
+    if (initiator2target_buffer_size != sizeof(rpc_sync_info_t) ||
+        crc8(&split_shmem->rpc_info.payload, sizeof(split_shmem->rpc_info.payload)) != split_shmem->rpc_info.checksum ||
+        transaction_id <= GET_RPC_RESP_DATA || transaction_id >= NUM_TOTAL_TRANSACTIONS ||
+        !split_transaction_table[transaction_id].slave_callback ||
+        split_shmem->rpc_info.payload.m2s_length > RPC_M2S_BUFFER_SIZE ||
+        split_shmem->rpc_info.payload.s2m_length > RPC_S2M_BUFFER_SIZE) {
+        return;
+    }
+    sm62_rpc_info_valid = true;
+#endif
     split_transaction_table[PUT_RPC_REQ_DATA].initiator2target_buffer_size  = split_shmem->rpc_info.payload.m2s_length;
     split_transaction_table[GET_RPC_RESP_DATA].target2initiator_buffer_size = split_shmem->rpc_info.payload.s2m_length;
 }
 
 void slave_rpc_exec_callback(uint8_t initiator2target_buffer_size, const void *initiator2target_buffer, uint8_t target2initiator_buffer_size, void *target2initiator_buffer) {
+#if defined(KEYBOARD_ergohaven_sm62)
+    if (!sm62_rpc_info_valid) return;
+    sm62_rpc_info_valid = false;
+#endif
     // We can assume that the buffer lengths are correctly set, now, given that sequentially the rpc_info callback was already executed.
     // Go through the rpc_info and execute _that_ transaction's callback, with the scratch buffers as inputs.
     // As a safety precaution we check that the received payload matches its checksum first.

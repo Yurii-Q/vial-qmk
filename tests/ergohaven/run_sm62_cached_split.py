@@ -68,6 +68,10 @@ static bool transaction_rpc_exec(int id,uint8_t n,const void *in,uint8_t m,void 
 }
 '''
 exports=r'''
+/* Storage is not exercised by this split-only fixture. */
+const uint8_t *sm62_cache_flash_record(unsigned r){static const uint8_t empty[8192];return r<SM62_CACHE_RECORDS?empty:NULL;}
+bool sm62_cache_flash_erase(unsigned r){(void)r;return false;}
+bool sm62_cache_flash_program(unsigned r,unsigned off,const uint8_t*p){(void)r;(void)off;(void)p;return false;}
 void __cyg_profile_func_enter(void *fn, void *caller) __attribute__((no_instrument_function));
 void __cyg_profile_func_exit(void *fn, void *caller) __attribute__((no_instrument_function));
 /* Weak per-object hooks are not used: compile-local hook names supplied by -D. */
@@ -200,7 +204,7 @@ commands=[]
 for role in ['master','peer']:
  src=P/(role+'.c');src.write_text(body.replace('ROLE_',role+'_')+extra.replace('ROLE_',role+'_'))
  obj=src.with_suffix('.o')
- cmd=['gcc','-std=gnu11','-O0','-g','-Wall','-Wextra','-Werror','-Wno-unused-function','-Wno-type-limits','-fsanitize=undefined','-fno-sanitize-recover=all','-finstrument-functions',f'-DIS_MASTER={int(role=="master")}','-DKEYBOARD_ergohaven_sm62','-DEH_SM62_SPLIT_RUNTIME_ENABLE','-I'+str(ROOT/'keyboards/ergohaven'),'-c',str(src),'-o',str(obj)]
+ cmd=['gcc','-include',str(ROOT/'quantum/sm62_trace.h'),'-std=gnu11','-O0','-g','-Wall','-Wextra','-Werror','-Wno-unused-function','-Wno-type-limits','-fsanitize=undefined','-fno-sanitize-recover=all','-finstrument-functions',f'-DIS_MASTER={int(role=="master")}','-DKEYBOARD_ergohaven_sm62','-DEH_SM62_SPLIT_RUNTIME_ENABLE','-I'+str(ROOT/'keyboards/ergohaven'),'-c',str(src),'-o',str(obj)]
  commands.append(cmd);subprocess.run(cmd,check=True)
  syms=subprocess.check_output(['nm','-g','--defined-only',str(obj)],text=True)
  local=[l.split()[-1] for l in syms.splitlines() if not l.split()[-1].startswith(role+'_')]

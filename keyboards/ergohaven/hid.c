@@ -242,9 +242,14 @@ static bool app_layout_session_live(void) {
     return false;
 }
 
+#if defined(KEYBOARD_ergohaven_sm62)
+#include "sm62/compact_usb.h"
+#endif
+
 void hid_app_layout_task(void) {
     app_layout_session_live();
 #if defined(KEYBOARD_ergohaven_sm62)
+    app_compact_expire();
     if (app_layout_staging.valid && timer_elapsed32(app_layout_staging_time) >= EH_APP_LAYOUT_TIMEOUT_MS) app_layout_staging.valid = false;
 #endif
 }
@@ -255,8 +260,18 @@ void hid_app_layout_task(void) {
  * through VIA; core1 renders its leased snapshot, never this queue. Wrong
  * versions, sizes and E6 subcommands retain the ordinary FIFO path. */
 bool hid_app_layout_packet_safe_during_refresh(const uint8_t *data, uint8_t length) {
+    if (length==32 && data[0]==0xEF && data[1]==9)
+        return data[2]==0 || data[2]==2 || data[2]==3 || data[2]==5 || data[2]==6;
     if (length != 32 || data[1] != EH_APP_LAYOUT_PROTOCOL_VERSION) return false;
     switch (data[0]) {
+        case 0xEB:
+            return data[2] == 0xA5 && (data[3] == 1 || data[3] == 2);
+        case 0xEF:
+            return data[2] == 0 || data[2] == 2; /* STORE must wait for flash/render quiescence. */
+        case 0xEC:
+        case 0xED:
+        case 0xEE:
+            return true;
         case EH_APP_LAYOUT_EVENT_POLL:
             return data[2] == EH_APP_LAYOUT_EVENT_REQUEST;
         case EH_APP_LAYOUT_BEGIN:
@@ -276,6 +291,13 @@ bool hid_app_layout_packet_safe_during_refresh(const uint8_t *data, uint8_t leng
 #endif
 
 bool hid_app_layout_process_packet(uint8_t *data, uint8_t length) {
+#if defined(KEYBOARD_ergohaven_sm62)
+    if (length && app_compact_packet(data, length)) return true;
+    if (!app_compact_replaying && length &&
+        (data[0] == EH_APP_LAYOUT_BEGIN || data[0] == EH_APP_LAYOUT_DEACTIVATE ||
+         data[0] == EH_APP_LAYOUT_KEYCODES || data[0] == EH_APP_LAYOUT_COMMIT ||
+         data[0] == EH_APP_LAYOUT_VISUALS || data[0] == EH_APP_LAYOUT_LAYER_NAME || data[0] == EH_APP_LAYOUT_ENCODER_STACK)) app_compact_reset();
+#endif
     if (length < 2 || data[1] != EH_APP_LAYOUT_PROTOCOL_VERSION) return false;
 #if defined(KEYBOARD_ergohaven_sm62)
     if (app_layout_staging.valid && timer_elapsed32(app_layout_staging_time) >= EH_APP_LAYOUT_TIMEOUT_MS) app_layout_staging.valid = false;
@@ -406,6 +428,13 @@ bool hid_app_layout_process_packet(uint8_t *data, uint8_t length) {
                 app_layout_staging.valid = false;
                 return true;
             }
+#if defined(KEYBOARD_ergohaven_sm62)
+            if (app_compact_validate_only && app_compact_replaying) {
+                app_compact_validated = true;
+                app_layout_staging.valid = false;
+                return true;
+            }
+#endif
             bool layout_changed = app_layout_active != app_layout_staging.active ||
                                   memcmp(app_layout_keycodes, app_layout_staging.keycodes, sizeof(app_layout_keycodes)) != 0 ||
                                   memcmp(app_layout_stack_counts, app_layout_staging.stack_counts, sizeof(app_layout_stack_counts)) != 0 ||
@@ -1182,7 +1211,11 @@ static void sm62_hid_relay_task(void) {
 
 void raw_hid_receive_kb(uint8_t *data, uint8_t length) {
 #ifdef EH_APP_LAYOUT_ENABLE
-    bool app_layout_event_poll = length > 0 && data[0] == EH_APP_LAYOUT_EVENT_POLL;
+    bool app_layout_event_poll = length > 0 && (data[0] == EH_APP_LAYOUT_EVENT_POLL
+#if defined(KEYBOARD_ergohaven_sm62)
+        || data[0] == 0xEB || data[0] == 0xEF
+#endif
+    );
     if (hid_app_layout_process_packet(data, length)) {
         if (!app_layout_event_poll) *((uint64_t *)data) = VIAL_HID_MAGIC;
         return;
@@ -1229,7 +1262,11 @@ void keyboard_post_init_hid(void) {
 
 void raw_hid_receive_kb(uint8_t *data, uint8_t length) {
 #ifdef EH_APP_LAYOUT_ENABLE
-    bool app_layout_event_poll = length > 0 && data[0] == EH_APP_LAYOUT_EVENT_POLL;
+    bool app_layout_event_poll = length > 0 && (data[0] == EH_APP_LAYOUT_EVENT_POLL
+#if defined(KEYBOARD_ergohaven_sm62)
+        || data[0] == 0xEB || data[0] == 0xEF
+#endif
+    );
     if (hid_app_layout_process_packet(data, length)) {
         if (!app_layout_event_poll) *((uint64_t *)data) = VIAL_HID_MAGIC;
         return;

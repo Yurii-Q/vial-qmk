@@ -1,6 +1,8 @@
 MCU = RP2040
 BOARD = GENERIC_RP_RP2040
 BOOTLOADER = rp2040
+# Production PCB has 4 MiB, not the Pico prototype's default 2 MiB.
+OPT_DEFS += -DPICO_FLASH_SIZE_BYTES=4194304
 SPLIT_KEYBOARD = yes
 SERIAL_DRIVER = vendor
 # The full-screen Orbit SPI transfer pauses matrix scanning. Accept a press
@@ -74,5 +76,10 @@ SRC += render_mailbox.c
 SRC += render_exchange.c
 SRC += render_owner.c
 SRC += dualcore_trace.c
-# Dedicated extension sectors precede the unchanged 16KiB QMK backing.
-LDFLAGS += -Wl,--defsym=FLASH_LEN=0x1fa000
+# Dedicated 32KiB three-profile journal precedes unchanged extension/EEPROM.
+SRC += resident_cache_flash.c
+# One conservative code ceiling drives both production C and linker guards.
+SM62_CODE_FLASH_LIMIT := 0x1f2000
+OPT_DEFS += -DSM62_CODE_FLASH_LIMIT=$(SM62_CODE_FLASH_LIMIT)
+LDFLAGS += -Wl,--defsym=FLASH_LEN=$(SM62_CODE_FLASH_LIMIT)
+LDFLAGS += -Wl,-T,keyboards/ergohaven/sm62/layout_reserve.ld

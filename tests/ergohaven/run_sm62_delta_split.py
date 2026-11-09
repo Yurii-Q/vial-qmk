@@ -36,6 +36,16 @@ common=r'''
 #define DYNAMIC_KEYMAP_LAYER_COUNT 16
 #define MATRIX_ROWS 10
 #define MATRIX_COLS 7
+/* Hardware boundary only. Each role's object gets its own modeled flash;
+ * the production compact parser/journal remains linked and unchanged. */
+static uint8_t cache_flash[4][8192];
+const uint8_t *sm62_cache_flash_record(unsigned r){return r<4?cache_flash[r]:NULL;}
+bool sm62_cache_flash_erase(unsigned r){if(r>=4)return false;memset(cache_flash[r],255,8192);return true;}
+bool sm62_cache_flash_program(unsigned r,unsigned off,const uint8_t *p){
+ if(r>=4 || off%256 || off>8192-256 || !p)return false;
+ for(unsigned i=0;i<256;i++)cache_flash[r][off+i]&=p[i];
+ return true;
+}
 static uint8_t eeprom[16*10*7*2];
 #define DYNAMIC_KEYMAP_EEPROM_ADDR eeprom
 #define KC_NO 0
@@ -80,7 +90,7 @@ void __cyg_profile_func_enter(void *fn,void *caller){
  if(fn==(void*)app_layout_crc16_byte)crc_bytes++;
 }
 void __cyg_profile_func_exit(void *fn,void *caller){(void)caller;if(fn==(void*)sm62_app_publish)atomic_guard=false;}
-void ROLE_init(void){hid_app_layout_split_init();}
+void ROLE_init(void){memset(cache_flash,255,sizeof(cache_flash));hid_app_layout_split_init();}
 void ROLE_task(void){hid_app_layout_split_task();}
 void ROLE_receive(uint8_t n,const void *in,uint8_t m,void *out){bytes_in+=n;bytes_out+=m;callback(n,in,m,out);}
 void ROLE_stats(uint64_t *v){v[0]=captures;v[1]=reads;v[2]=rpcs;v[3]=publications;v[4]=crc_bytes;v[5]=bytes_out;v[6]=bytes_in;v[7]=sizeof(sm62_app_image_t);v[8]=offsetof(sm62_app_image_t,crc);v[9]=sm62_app_tx_epoch;}
