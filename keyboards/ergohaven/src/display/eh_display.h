@@ -28,6 +28,8 @@ void display_turn_on(void);
 void display_turn_off(void);
 void display_refresh(void);
 
+void display_set_inverted(bool on);
+
 bool is_display_enabled(void);
 bool display_should_wake_on_usb_resume(void);
 

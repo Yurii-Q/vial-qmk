@@ -1,4 +1,9 @@
 #include "hid.h"
+
+/* Дашборд есть только у SM62, остальные клавиатуры этого каталога о нём не знают. */
+#if defined(KEYBOARD_ergohaven_sm62)
+#    include "keyboards/ergohaven/sm62/screen_dash.h"
+#endif
 #include "sm62_trace.h"
 #include <string.h>
 #include "via.h"
@@ -784,6 +789,17 @@ typedef enum {
     _MEDIA_PROGRESS = 0xB1,
     _SM62_MEDIA_TITLE_CHUNK = 0xBB, /* offset, total UTF-8 bytes, up to 29 bytes */
 
+    /* Дашборд: экран целиком управляется хостом.
+     * Ниже разбор в sm62_dash_process_packet(); формат пакетов описан в
+     * keyboards/ergohaven/sm62/screen_dash.h. */
+    _DASH_BEGIN = 0xC0,
+    _DASH_TEXT,
+    _DASH_BAR,
+    _DASH_RECT,
+    _DASH_COMMIT,
+    _DASH_SCREEN,
+    _DASH_INVERT,
+
     _RELAY_FROM_DEVICE = 0xCC,
     _RELAY_TO_DEVICE,
 } hid_data_type;
@@ -808,6 +824,94 @@ void read_string(uint8_t *data, uint8_t length, char *string_data) {
     string_data[data_length] = '\0';
 }
 
+#if defined(KEYBOARD_ergohaven_sm62)
+static bool sm62_dash_is_local_side(uint8_t target);
+
+/* Разбор кадров дашборда. Канал общий: обе половины получают один и тот же
+ * поток, и каждая применяет только пакеты со своим адресом (0 левая, 1 правая,
+ * 2 обе). Мастер дополнительно ретранслирует чужие пакеты, см.
+ * sm62_dash_relay_push() ниже.
+ *
+ * Проверки длины здесь не «на всякий случай»: REPORT_SIZE 32, но хост вправе
+ * прислать короткий пакет. Недостающая длина — это break, а не отказ от всего
+ * кадра: остальные элементы всё равно доедут, а этот просто не обновится. */
+
+/* У BEGIN адрес лежит на позиции 2 (после версии), у остальных пакетов — на 1. */
+static uint8_t sm62_dash_packet_target(uint8_t type, const uint8_t *data) {
+    return type == _DASH_BEGIN ? data[2] : data[1];
+}
+
+/* true — пакет наш (дашборд), обычную обработку HID звать не нужно.
+ * false — это не наш диапазон, пусть разбирает общий код. */
+static bool sm62_dash_process_packet(uint8_t *data, uint8_t length) {
+    uint8_t type = data[0];
+    if (type < _DASH_BEGIN || type > _DASH_INVERT) return false;
+    if (length < 2) return true;
+    uint8_t target = sm62_dash_packet_target(type, data);
+    if (!sm62_dash_is_local_side(target)) return true;
+
+    switch (type) {
+        case _DASH_BEGIN:
+            if (length < 4) break;
+            sm62_dash_begin(data[1], target, data[3]);
+            break;
+        case _DASH_TEXT: {
+            if (length < 14) break;
+            uint16_t x     = data[3];
+            uint16_t y     = (uint16_t)data[4] | ((uint16_t)data[5] << 8);
+            uint16_t w     = (uint16_t)data[6] | ((uint16_t)data[7] << 8);
+            uint8_t  font  = data[8] & 0x0F;
+            uint8_t  align = data[8] >> 4;
+            uint16_t color = (uint16_t)data[9] | ((uint16_t)data[10] << 8);
+            uint8_t  flags = data[11];
+            uint8_t  off   = data[12];
+            /* len может врать: зажимаем по фактически пришедшим байтам,
+             * иначе memcpy в screen_dash.c прочитает за пределами пакета. */
+            uint8_t  len   = data[13] <= length - 14 ? data[13] : length - 14;
+            sm62_dash_text(data[2], x, y, w, font, color, align, flags, off, data + 14, len);
+            break;
+        }
+        case _DASH_BAR: {
+            if (length < 22) break;
+            uint16_t x   = data[3];
+            uint16_t y   = (uint16_t)data[4] | ((uint16_t)data[5] << 8);
+            uint16_t w   = (uint16_t)data[6] | ((uint16_t)data[7] << 8);
+            uint16_t h   = (uint16_t)data[8] | ((uint16_t)data[9] << 8);
+            uint32_t pos = (uint32_t)data[10] | ((uint32_t)data[11] << 8) | ((uint32_t)data[12] << 16) | ((uint32_t)data[13] << 24);
+            uint32_t dur = (uint32_t)data[14] | ((uint32_t)data[15] << 8) | ((uint32_t)data[16] << 16) | ((uint32_t)data[17] << 24);
+            uint16_t fg  = (uint16_t)data[18] | ((uint16_t)data[19] << 8);
+            uint16_t bg  = (uint16_t)data[20] | ((uint16_t)data[21] << 8);
+            sm62_dash_bar(data[2], x, y, w, h, pos, dur, fg, bg);
+            break;
+        }
+        case _DASH_RECT: {
+            if (length < 13) break;
+            uint16_t x = data[3];
+            uint16_t y = (uint16_t)data[4] | ((uint16_t)data[5] << 8);
+            uint16_t w = (uint16_t)data[6] | ((uint16_t)data[7] << 8);
+            uint16_t h = (uint16_t)data[8] | ((uint16_t)data[9] << 8);
+            uint16_t c = (uint16_t)data[10] | ((uint16_t)data[11] << 8);
+            sm62_dash_rect(data[2], x, y, w, h, c, data[12]);
+            break;
+        }
+        case _DASH_COMMIT:
+            sm62_dash_commit();
+            break;
+        case _DASH_SCREEN:
+            /* зарезервировано под переключение экрана с хоста */
+            break;
+        case _DASH_INVERT:
+            /* только флаг: к панели прикасаемся из housekeep, иначе дедлок
+             * с идущей передачей по SPI (см. screen_dash.c) */
+            if (length >= 3) sm62_dash_invert(data[2] != 0);
+            break;
+        default:
+            break;
+    }
+    return true;
+}
+#endif
+
 bool process_raw_hid_data(uint8_t *data, uint8_t length) {
 #if !defined(KEYBOARD_ergohaven_sm62)
     if (length < 3) return false;
@@ -816,6 +920,10 @@ bool process_raw_hid_data(uint8_t *data, uint8_t length) {
     if (length < 2) return false;
 #endif
     uint8_t data_type = data[0];
+
+#if defined(KEYBOARD_ergohaven_sm62)
+    if (sm62_dash_process_packet(data, length)) return true;
+#endif
 
     bool new_hid_data = false;
 
@@ -1100,6 +1208,67 @@ static bool process_via_custom_lighting(uint8_t *data, uint8_t length) {
  * Key transitions are retained separately per physical key, so a transient
  * split stall cannot leave a released key held on the other half. */
 #        define SM62_RELAY_TYPES 8
+/* Очередь адресованных кадров дашборда для второй половины. Пакеты идут как
+ * есть: слейв применяет их тем же разбором, target проверяется по его стороне.
+ *
+ * Почему очередь, а не отправка сразу из обработчика HID: transaction_rpc_send()
+ * синхронный. Вызов из разбора пакета блокирует главный цикл на время обмена,
+ * а если напарник не отвечает — на таймаут. В это время матрица не
+ * сканируется, и клавиши теряются точно так же, как при перерисовке экрана.
+ * Поэтому пакеты копятся, а отправляет их отдельная задача по одному за тик.
+ *
+ * 48 слотов хватает на самый длинный кадр (BEGIN + 24 элемента по несколько
+ * пакетов + COMMIT); переполнение рвёт кадр, а не залипает навсегда. */
+#        define SM62_DASH_RELAY_SLOTS 48
+static uint8_t sm62_dash_rq[SM62_DASH_RELAY_SLOTS][32];
+static uint8_t sm62_dash_rq_len[SM62_DASH_RELAY_SLOTS];
+static volatile uint8_t sm62_dash_rq_head, sm62_dash_rq_tail;
+
+static bool sm62_dash_is_local_side(uint8_t target) {
+    if (target >= 2) return true;
+    return target == (is_keyboard_left() ? 0 : 1u);
+}
+
+static void sm62_dash_relay_push(const uint8_t *data, uint8_t length) {
+    if (length < 2) return;
+    uint8_t target = data[0] == _DASH_BEGIN ? (length >= 3 ? data[2] : 2) : data[1];
+    if (target < 2 && sm62_dash_is_local_side(target)) return; // пакет только для нас, ретранслировать нечего
+    uint8_t next = (uint8_t)((sm62_dash_rq_head + 1) % SM62_DASH_RELAY_SLOTS);
+    if (next == sm62_dash_rq_tail) {
+        /* Очередь переполнена. Выбрасываем всё накопленное, а не ждём:
+         * лучше потерять один кадр, чем застрять с мусором, который уже
+         * не соберётся в целую картинку. Следующий кадр придёт полным. */
+        sm62_dash_rq_tail = sm62_dash_rq_head;
+    }
+    /* Пакет длиннее 32 байт прийти не может (размер репорта), но зажимаем
+     * явно: очередь — статический буфер, переполнение испортит соседние слоты. */
+    uint8_t copy = length > 32 ? 32 : length;
+    memcpy(sm62_dash_rq[sm62_dash_rq_head], data, copy);
+    sm62_dash_rq_len[sm62_dash_rq_head] = copy;
+    sm62_dash_rq_head = next;
+}
+
+static uint8_t sm62_dash_relay_pending_count(void) {
+    return (uint8_t)((sm62_dash_rq_head + SM62_DASH_RELAY_SLOTS - sm62_dash_rq_tail) % SM62_DASH_RELAY_SLOTS);
+}
+
+/* Отправляет один пакет за вызов, чтобы блокировка на RPC не съедала
+ * больше одного обмена. */
+static bool sm62_dash_relay_pump(void) {
+    if (sm62_dash_rq_head == sm62_dash_rq_tail) return false;
+    uint8_t index = sm62_dash_rq_tail;
+    if (!transaction_rpc_send(RPC_SYNC_HID, sm62_dash_rq_len[index], sm62_dash_rq[index])) {
+        /* Напарник не отвечает (выдернут, в BOOTSEL, перезагружается).
+         * Не зацикливаемся и не повторяем один и тот же пакет: пока идёт
+         * обмен с таймаутом, главный цикл стоит, а значит не обрабатываются
+         * клавиши. Сбрасываем очередь — следующий кадр придёт целиком. */
+        sm62_dash_rq_tail = sm62_dash_rq_head;
+        return false;
+    }
+    sm62_dash_rq_tail = (uint8_t)((sm62_dash_rq_tail + 1) % SM62_DASH_RELAY_SLOTS);
+    return true;
+}
+
 static uint8_t sm62_relay_data[SM62_RELAY_TYPES][32];
 static uint8_t sm62_relay_length[SM62_RELAY_TYPES];
 static uint8_t sm62_relay_pending;
@@ -1141,6 +1310,12 @@ static void sm62_hid_relay_queue(const uint8_t *data, uint8_t length) {
         if (data[3]) sm62_key_pressed |= bit;
         else sm62_key_pressed &= ~bit;
         sm62_key_pending |= bit;
+        return;
+    }
+    /* Дашборд ретранслируем отдельной очередью: он объёмнее медиа-пакетов
+     * и не должен раздувать общий relay-буфер. */
+    if (data[0] >= _DASH_BEGIN && data[0] <= _DASH_INVERT) {
+        sm62_dash_relay_push(data, length);
         return;
     }
     if (data[0] == _SM62_MEDIA_TITLE_CHUNK) {
@@ -1186,11 +1361,18 @@ static void sm62_hid_relay_task(void) {
         sm62_relay_title_offset = 0;
         sm62_relay_remote_mode = remote_mode;
     }
-    if (!sm62_key_pending && !sm62_relay_pending) return;
+    if (!sm62_key_pending && !sm62_relay_pending && !sm62_dash_relay_pending_count()) return;
     if (!is_transport_connected()) return;
     uint32_t interval = sm62_relay_failed ? 50U : 10U;
     if (sm62_relay_last_attempt && timer_elapsed32(sm62_relay_last_attempt) < interval) return;
     sm62_relay_last_attempt = timer_read32();
+
+    /* Дашборд имеет приоритет над остальной ретрансляцией: кадр должен
+     * доехать до второй половины целым, иначе она покажет обрывок. */
+    if (sm62_dash_relay_pending_count()) {
+        if (sm62_dash_relay_pump()) sm62_relay_last_attempt = timer_read32();
+        return;
+    }
 
     if (sm62_key_pending) {
         uint8_t index = (uint8_t)__builtin_ctzll(sm62_key_pending);

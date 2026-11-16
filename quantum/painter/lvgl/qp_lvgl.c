@@ -33,12 +33,39 @@ void *           color_buffer     = NULL;
 /* Boards may release frame leases only once the final LVGL strip is sent. */
 __attribute__((weak)) void display_frame_completed(void) {}
 
+/* Обслуживание ввода между полосами кадра.
+ *
+ * Почему хук вообще нужен. Кадр LVGL уходит в панель полосами: qp_pixdata()
+ * копирует пиксели, qp_flush() синхронно выпихивает их по SPI. Всё это
+ * происходит в главном цикле, и пока функция не вернулась, keyboard_task()
+ * не вызывается: матрица не сканируется, USB-очередь не разбирается.
+ *
+ * Нажатие, которое пришло в это окно, для сканера не существует. Настройка
+ * DEBOUNCE_TYPE = asym_eager_defer_pk засчитывает нажатие на первом же
+ * увиденном скане, но если нажатие и отпускание целиком уложились внутрь
+ * передачи одной полосы, сканер не увидел ни одного фронта и событие
+ * теряется навсегда. Чем чаще и длиннее кадры, тем заметнее пропуски.
+ *
+ * Хук вызывается после каждой полосы, а не после целого кадра: тогда задержка
+ * ввода ограничена временем передачи одной полосы, а не всего кадра.
+ *
+ * Реализация на стороне клавиатуры обязана:
+ *   - только обслуживать ввод (keyboard_task и то, что он тянет за собой);
+ *   - не запускать новый флаш и не трогать дисплей;
+ *   - защищаться от рекурсии: keyboard_task() может привести к новой
+ *     отрисовке, а та — к новому вызову этого хука.
+ * По умолчанию хук пустой, поэтому остальные платы не платят за него ничего. */
+__attribute__((weak)) void qp_lvgl_flush_input_service(void) {}
+
 void qp_lvgl_flush(lv_disp_drv_t *disp, const lv_area_t *area, lv_color_t *color_p) {
     if (selected_display) {
         uint32_t number_pixels = (area->x2 - area->x1 + 1) * (area->y2 - area->y1 + 1);
         qp_viewport(selected_display, area->x1, area->y1, area->x2, area->y2);
         qp_pixdata(selected_display, (void *)color_p, number_pixels);
         qp_flush(selected_display);
+        /* Полоса ушла в панель — отдаём главному циклу накопившийся ввод.
+         * Без этого вызова нажатия во время перерисовки теряются. */
+        qp_lvgl_flush_input_service();
         if (lv_disp_flush_is_last(disp)) {
             display_frame_completed();
         }

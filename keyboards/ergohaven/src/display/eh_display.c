@@ -4,6 +4,7 @@
 #include "hid.h"
 #include "lvgl_helpers.h"
 #include "qp.h"
+#include "qp_comms.h"
 #include "src/eh_ruen.h"
 #include "eh_symbols.h"
 #include "src/eh_settings.h"
@@ -410,4 +411,21 @@ const char *get_layout_label(uint8_t layout) {
             return EH_SYMBOL_GLOBE " RU";
             break;
     }
+}
+
+/* Аппаратная инверсия панели — для вспышек-алертов дашборда.
+ *
+ * Почему транзакция обязательна: qp_comms_start/stop забирают шину и отпускают
+ * её только после команды. Без них команда может попасть в середину передачи
+ * полосы LVGL и подвесить клавиатуру (дедлок с идущим флашем).
+ * Поэтому вызов допустим только из housekeep, никогда из обработчика USB. */
+void display_set_inverted(bool on) {
+#ifdef QUANTUM_PAINTER_ST7789_SPI_ENABLE
+    if (!display) return;
+    qp_comms_start(display);
+    qp_st7789_invert(display, on);
+    qp_comms_stop(display);
+#else
+    (void)on;
+#endif
 }

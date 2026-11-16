@@ -7,6 +7,11 @@ SPLIT_KEYBOARD = yes
 SERIAL_DRIVER = vendor
 # The full-screen Orbit SPI transfer pauses matrix scanning. Accept a press
 # on its first observed scan; debounce the release independently per key.
+# Пока идёт передача кадра по SPI, keyboard_task() не вызывается и матрица не
+# сканируется. asym_eager_defer_pk спасает только нажатие, увиденное на первом
+# же скане после передачи; нажатие с отпусканием внутри окна теряется. Поэтому
+# ввод дополнительно обслуживается между полосами кадра (см. qp_lvgl.c и
+# display_input.c), а оверлей keymap включается только при ненулевом слое.
 DEBOUNCE_TYPE = asym_eager_defer_pk
 
 NKRO_ENABLE = yes
@@ -45,6 +50,12 @@ SRC += keyboards/ergohaven/src/display/eh_keycode_str.c
 SRC += keyboards/ergohaven/src/display/fonts/eh_font_iosevka_28.c
 SRC += keyboards/ergohaven/sm30/anim.c
 SRC += screen_orbit_exact.c
+# Экран-дашборд и два шрифта под него: плотный список встреч требует 12 и 14 px,
+# остальные кегли уже есть в прошивке. Шрифты содержат ASCII 32-127 и
+# кириллицу 1040-1103, генерируются скриптом gen-fonts.sh из docs sm62.
+SRC += screen_dash.c
+SRC += keyboards/ergohaven/macropad/sm62_font_zen_medium_12.c
+SRC += keyboards/ergohaven/macropad/sm62_font_zen_medium_14.c
 SRC += keyboards/ergohaven/macropad/sm62_starfield.c
 SRC += keyboards/ergohaven/macropad/sm62_layer_04.c
 SRC += keyboards/ergohaven/macropad/sm62_font_unbounded_16.c
